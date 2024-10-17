@@ -20,7 +20,7 @@ app = QApplication(sys.argv)
 window = QWidget()
 window.setWindowTitle("订单管理系统")
 window.setGeometry(100, 100, 800, 600)
-sadfsdf
+
 # 程序启动时加载数据
 initialize_database()
 load_purchase_orders_from_db()
