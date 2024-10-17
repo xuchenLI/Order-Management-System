@@ -1,5 +1,5 @@
 # main.py
-#推送尝试
+#推送尝试2
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
 )
