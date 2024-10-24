@@ -1,9 +1,9 @@
 # data.py
 import sqlite3
-import datetime 
-from PyQt6.QtWidgets import QMessageBox 
-from PyQt6.QtCore import QObject, pyqtSignal 
-     
+import datetime  
+from PyQt6.QtWidgets import QMessageBox  
+from PyQt6.QtCore import QObject, pyqtSignal  
+
 # 定义共享数据
 purchase_orders = []
 sales_orders = []
@@ -86,7 +86,7 @@ def initialize_database():
         )
     ''')
 
-    # 创建库存表
+    # 创建库存表，去掉了之前新增的 "Order_Type" 字段
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
             "Product_ID" TEXT,
@@ -227,6 +227,10 @@ def load_inventory_from_db():
             for idx, field in enumerate(cursor.description):
                 field_name = field[0]
                 product[field_name] = row[idx] if row[idx] is not None else ''
+            # 在此处，从采购订单中获取对应的 Order Type
+            order_nb = product.get('Order_Nb', '')
+            purchase_order = get_purchase_order_by_nb(order_nb)
+            product['Order_Type'] = purchase_order.get('Order Type', '') if purchase_order else ''
             inventory.append(product)
     except Exception as e:
         print(f"无法从数据库加载库存数据：{e}")
@@ -252,8 +256,6 @@ def save_inventory_to_db(product):
         QMessageBox.critical(None, "保存错误", f"保存库存数据时发生错误：{e}")
 
 # 更新库存数量
-#  这里有个问题，就是当售出了一部分产品后，发现采购数目输入多了。这时要是卖出的产品数目已经超过了要修改的数目。
-#  这里就会提示库存不足。
 def update_inventory(product_id, order_nb, quantity_change_cs, quantity_change_btl, arrival_date, creation_date, item_name, sku_cls, btl_per_cs):
     try:
         conn = sqlite3.connect('orders.db')
