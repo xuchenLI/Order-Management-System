@@ -64,10 +64,10 @@ class InventoryManagementWindow(QWidget):
         self.detail_inventory_table = QTableWidget()
         self.detail_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.detail_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.detail_inventory_table.setColumnCount(12)
+        self.detail_inventory_table.setColumnCount(13)
         self.detail_inventory_table.setHorizontalHeaderLabels([
             'Order Type', 'Allocation', 'Sub-allocation', '订单号', '产品编号', 'SKU CLS', '产品名称',
-            '库存-箱数', '库存-瓶数', '库存天数', '到仓库日期', '创建日期'
+            '库存-箱数', '库存-瓶数', '总瓶数','库存天数', '到仓库日期', '创建日期'
         ])
         self.detail_inventory_table.verticalHeader().setVisible(False)
         self.detail_inventory_table.horizontalHeader().setStretchLastSection(True)
@@ -168,18 +168,21 @@ class InventoryManagementWindow(QWidget):
             self.detail_inventory_table.setItem(row, 6, QTableWidgetItem(product['Product_Name']))
             self.detail_inventory_table.setItem(row, 7, QTableWidgetItem(str(product['Current_Stock_CS'])))
             self.detail_inventory_table.setItem(row, 8, QTableWidgetItem(str(product['Current_Stock_BTL'])))
-
+            # 计算总瓶数
+            btl_per_cs = int(product.get('BTL PER CS', 0))
+            total_btl = int(product['Current_Stock_CS']) * btl_per_cs + int(product['Current_Stock_BTL'])
+            self.detail_inventory_table.setItem(row, 9, QTableWidgetItem(str(total_btl)))
             # 计算库存天数
             arrival_date_str = product.get('Arrival_Date', '')
             if arrival_date_str:
                 arrival_date = datetime.datetime.strptime(arrival_date_str, "%Y-%m-%d")
                 delta_days = (datetime.datetime.now() - arrival_date).days
-                self.detail_inventory_table.setItem(row, 9, QTableWidgetItem(str(delta_days)))
+                self.detail_inventory_table.setItem(row, 10, QTableWidgetItem(str(delta_days)))
             else:
-                self.detail_inventory_table.setItem(row, 9, QTableWidgetItem("N/A"))
+                self.detail_inventory_table.setItem(row, 10, QTableWidgetItem("N/A"))
 
-            self.detail_inventory_table.setItem(row, 10, QTableWidgetItem(product.get('Arrival_Date', '')))
-            self.detail_inventory_table.setItem(row, 11, QTableWidgetItem(product.get('Creation_Date', '')))
+            self.detail_inventory_table.setItem(row, 11, QTableWidgetItem(product.get('Arrival_Date', '')))
+            self.detail_inventory_table.setItem(row, 12, QTableWidgetItem(product.get('Creation_Date', '')))
 
         # 更新总览表
         total_inventory = {}

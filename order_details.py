@@ -34,8 +34,8 @@ class OrderDetailsWindow(QWidget):
             ('Order Type', 'Order Type'),
             ('Order Step', 'Order Step'),
             ('期望利润', "Expected Profit"),
-            ('境内运费', 'Domestic Freight (CAD)'),
-            ('国际运费', 'International Freight(€)'),
+            ('境内运费', 'Domestic Freight CAD'),
+            ('国际运费', 'International Freight EURO'),
             ('EXW 汇率', 'EXW Exchange Rate'),
             ('国际运费汇率', 'International Freight Exchange Rate'),
             # 新增字段
@@ -54,7 +54,7 @@ class OrderDetailsWindow(QWidget):
             ("ALC.", "ALC."),
             ("QUANTITY CS", "QUANTITY CS"),
             ("BTL PER CS", "BTL PER CS"),
-            ("EXW(€)", "EXW(€)"),
+            ("EXW(€)", "EXW EURO"),
             ("REMARKS", "REMARKS"),
         ]
 
@@ -73,10 +73,10 @@ class OrderDetailsWindow(QWidget):
             elif field_name == "Expected Profit":
                 entry = QLineEdit()
                 entry.setText("0.05")
-            elif field_name == "Domestic Freight (CAD)":
+            elif field_name == "Domestic Freight CAD":
                 entry = QLineEdit()
                 entry.setText("35")
-            elif field_name == "International Freight(€)":
+            elif field_name == "International Freight EURO":
                 entry = QLineEdit()
                 entry.setText("0")
             elif field_name == "EXW Exchange Rate":
@@ -232,7 +232,7 @@ class OrderDetailsWindow(QWidget):
                         return
 
                 # 处理需要浮点数的字段
-                elif field_name in ["Expected Profit", "Domestic Freight (CAD)", "EXW(€)", "International Freight(€)", "EXW Exchange Rate", "International Freight Exchange Rate"]:
+                elif field_name in ["Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
@@ -277,12 +277,13 @@ class OrderDetailsWindow(QWidget):
                 product_id,
                 new_order['Order Nb'],
                 quantity_cs,
-                quantity_btl,
+                0,  # 采购时，没有散装瓶，设置为 0
                 arrival_date,
                 creation_date,
                 item_name,
                 sku_cls,
-                btl_per_cs
+                btl_per_cs,
+                operation_type='add_purchase_order'
             )
 
             # 保存采购订单
@@ -331,7 +332,7 @@ class OrderDetailsWindow(QWidget):
                         return
 
                 # 处理需要浮点数的字段
-                elif field_name in ["Expected Profit", "Domestic Freight (CAD)", "EXW(€)", "International Freight(€)", "EXW Exchange Rate", "International Freight Exchange Rate"]:
+                elif field_name in ["Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
@@ -374,7 +375,8 @@ class OrderDetailsWindow(QWidget):
                 creation_date,
                 item_name,
                 sku_cls,
-                btl_per_cs
+                btl_per_cs,
+                operation_type='update_purchase_order'
             )
 
             # 保存更新后的订单
@@ -391,8 +393,6 @@ class OrderDetailsWindow(QWidget):
         except Exception as e:
             print(f"更新订单时发生错误：{e}")
             QMessageBox.critical(self, "错误", f"更新订单时发生错误：{e}")
-
-    # 其余方法保持不变
 
     def open_price_calculator(self):
         open_price_calculator(self)
@@ -426,6 +426,11 @@ class OrderDetailsWindow(QWidget):
                 QMessageBox.warning(self, "删除失败", "请输入要删除的订单号！")
                 return
             order = get_purchase_order_by_nb(order_nb)
+            
+            # 调试输出
+            print(f"Order data: {order}")
+            print(f"Order type: {type(order)}")
+
             if order:
                 # 从采购订单列表中删除
                 purchase_orders.remove(order)
@@ -433,22 +438,25 @@ class OrderDetailsWindow(QWidget):
                 deleted_orders.append(order)
                 # 从数据库中删除
                 delete_purchase_order_from_db(order_nb)
-                # 更新库存
+                data_manager.data_changed.emit()  # 发射数据变化信号
+                # 获取当前库存
                 quantity_cs = int(order.get('QUANTITY CS', 0))
                 btl_per_cs = int(order.get('BTL PER CS', 0))
-                quantity_btl = quantity_cs * btl_per_cs
+
                 # 减少库存
                 update_inventory(
                     order.get('Product_ID', ''),
                     order_nb,
                     -quantity_cs,
-                    -quantity_btl,
+                    -0,
                     order.get('Arrival_Date', ''),
                     order.get('date', ''),
                     order.get('ITEM Name', ''),
                     order.get('SKU CLS', ''),
-                    btl_per_cs
+                    btl_per_cs,
+                    operation_type='revoke_purchase_order'
                 )
+                print(f"成功执行update_inventory函数")
                 self.update_order_table()
                 QMessageBox.information(self, "成功", f"订单 {order_nb} 已删除。")
             else:
@@ -469,6 +477,7 @@ class OrderDetailsWindow(QWidget):
             purchase_orders.append(order)
             # 保存到数据库
             save_purchase_order_to_db(order)
+            data_manager.data_changed.emit()  # 发射数据变化信号
             # 更新库存
             quantity_cs = int(order.get('QUANTITY CS', 0))
             btl_per_cs = int(order.get('BTL PER CS', 0))
@@ -483,7 +492,8 @@ class OrderDetailsWindow(QWidget):
                 order.get('date', ''),
                 order.get('ITEM Name', ''),
                 order.get('SKU CLS', ''),
-                btl_per_cs
+                btl_per_cs,
+                operation_type='add_purchase_order' #删除订单就会从库存中删除，所以撤销删除订单对库存来说等于新添加
             )
             self.update_order_table()
             QMessageBox.information(self, "成功", f"订单 {order['Order Nb']} 已恢复。")

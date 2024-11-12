@@ -1,5 +1,5 @@
 # main.py
-#尝试推送
+
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
 )
@@ -96,4 +96,5 @@ def open_inventory_management_window():
 window.setLayout(layout_main)
 window.show()
 
-sys.exit(app.exec())
+if __name__ == "__main__":
+    sys.exit(app.exec())

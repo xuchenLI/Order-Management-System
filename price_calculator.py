@@ -87,7 +87,7 @@ def calculate_and_display(order_nb, results_labels):
         # 计算 QUANTITY BTL 和 TOTAL AMOUNT
         QUANTITY_CS = int(order.get('QUANTITY CS', 0))
         BTL_PER_CS = int(order.get('BTL PER CS', 0))
-        EXW = float(order.get('EXW(€)', 0))
+        EXW = float(order.get('EXW EURO', 0))
 
         QUANTITY_BTL = QUANTITY_CS * BTL_PER_CS
         TOTAL_AMOUNT = EXW * QUANTITY_BTL
@@ -140,7 +140,7 @@ def update_order(order_nb, results_labels, order_details_window):
                 if key == 'TOTAL Freight CAD':
                     order['TOTAL Freight'] = value
                 elif key == 'TOTAL AMOUNT':
-                    order['TOTAL AMOUNT(€)'] = value
+                    order['TOTAL AMOUNT EURO'] = value
                 else:
                     order[key] = value
                 updated_fields[key] = value
@@ -160,13 +160,13 @@ def update_order(order_nb, results_labels, order_details_window):
 def calculate_invoice_price(order):
     try:
         # 验证并提取数据
-        EXW = float(order.get('EXW(€)', 0))
+        EXW = float(order.get('EXW EURO', 0))
         EXW_rate = float(order.get('EXW Exchange Rate', 0))
         BTL_PER_CS = int(order.get('BTL PER CS', 0))
         QUANTITY_CS = int(order.get('QUANTITY CS', 0))
         expected_profit = float(order.get('Expected Profit', 0))
-        domestic_freight = float(order.get('Domestic Freight (CAD)', 0))
-        international_freight = float(order.get('International Freight(€)', 0))
+        domestic_freight = float(order.get('Domestic Freight CAD', 0))
+        international_freight = float(order.get('International Freight EURO', 0))
         international_freight_rate = float(order.get('International Freight Exchange Rate', 0))
 
         # CIF Calculation
