@@ -1,0 +1,92 @@
+def deduct_inventory(product_id, quantity_cs_sold, quantity_btl_sold):
+    try:
+        conn = sqlite3.connect('orders.db')
+        cursor = conn.cursor()
+        btl_per_cs = get_btl_per_cs(product_id)
+        remaining_bottles_to_deduct = quantity_cs_sold * btl_per_cs + quantity_btl_sold
+
+        # 存储扣减详情的列表
+        deduction_details = []
+
+        # 获取库存记录，按 Arrival_Date 排序（先进先出）
+        cursor.execute('SELECT "Product_ID", "Order_Nb", "Current_Stock_CS", "Current_Stock_BTL", "BTL PER CS", '
+                       '"Arrival_Date", "Creation_Date", "Product_Name", "SKU_CLS" FROM inventory WHERE "Product_ID" = ? ORDER BY "Arrival_Date"', (product_id,))
+        rows = cursor.fetchall()
+
+        for row in rows:
+            prod_id, order_nb, current_stock_cs, current_stock_btl, btl_per_cs, arrival_date, creation_date, product_name, sku_cls = row
+            current_stock_cs = int(current_stock_cs)
+            current_stock_btl = int(current_stock_btl)
+            btl_per_cs = int(btl_per_cs)
+
+            # 计算库存中的总瓶数
+            total_bottles_in_stock = current_stock_cs * btl_per_cs + current_stock_btl
+
+            if total_bottles_in_stock == 0:
+                continue
+
+            if remaining_bottles_to_deduct <= total_bottles_in_stock:
+                # 计算需要扣减的瓶数
+                deduct_btl = remaining_bottles_to_deduct
+                deduct_cs = deduct_btl // btl_per_cs
+                deduct_btl = deduct_btl % btl_per_cs
+
+                # 更新库存
+                update_inventory(
+                    prod_id,
+                    order_nb,
+                    -deduct_cs,
+                    -deduct_btl,
+                    arrival_date,
+                    creation_date,
+                    product_name,
+                    sku_cls,
+                    btl_per_cs,
+                    operation_type='sales'  # 传递操作类型
+                )
+
+                # 记录扣减详情
+                deduction_details.append({
+                    'Order_Nb': order_nb,
+                    'Deduct_CS': deduct_cs,
+                    'Deduct_BTL': deduct_btl
+                })
+
+                remaining_bottles_to_deduct = 0
+                break
+            else:
+                # 扣减当前库存中的全部瓶数
+                deduct_cs = current_stock_cs
+                deduct_btl = current_stock_btl
+
+                update_inventory(
+                    prod_id,
+                    order_nb,
+                    -deduct_cs,
+                    -deduct_btl,
+                    arrival_date,
+                    creation_date,
+                    product_name,
+                    sku_cls,
+                    btl_per_cs,
+                    operation_type='sales'  # 传递操作类型
+                )
+
+                # 记录扣减详情
+                deduction_details.append({
+                    'Order_Nb': order_nb,
+                    'Deduct_CS': deduct_cs,
+                    'Deduct_BTL': deduct_btl
+                })
+
+                remaining_bottles_to_deduct -= total_bottles_in_stock
+
+        if remaining_bottles_to_deduct > 0:
+            raise ValueError("库存不足，无法扣减库存")
+
+        conn.close()
+        return deduction_details
+
+    except Exception as e:
+        print(f"扣减库存时发生错误：{e}")
+        raise e
