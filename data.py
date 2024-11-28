@@ -45,8 +45,6 @@ db_fields = [
     ("Date", "date"),
     # 新增字段
     ("产品到仓库的日期", "Arrival_Date"),
-    ("Allocation", "Allocation"),
-    ("Sub-allocation", "Sub_allocation"),
 ]
 
 # 数据管理器，用于发射数据变化信号
@@ -88,7 +86,9 @@ def initialize_database():
             "Shipped_Date" TEXT,
             "Remarks" TEXT,
             "Deduction_Details" TEXT,
-            "Order_Nb" TEXT
+            "Order_Nb" TEXT,
+            "Product_Name",
+            "BTL_PER_CS" INTEGER
         )
     ''')
 
@@ -100,13 +100,12 @@ def initialize_database():
             "Product_Name" TEXT,
             "SKU_CLS" TEXT,
             "Current_Stock_CS" INTEGER,
-            "Current_Stock_BTL" INTEGER,
             "BTL PER CS" INTEGER,
             "Last_Update" TEXT,
             "Arrival_Date" TEXT,
             "Creation_Date" TEXT,
-            "Allocation" TEXT,
-            "Sub-allocation" TEXT,
+            "Sale_Date" TEXT,
+            "Sales_Orders" TEXT,
             PRIMARY KEY ("Product_ID", "Order_Nb")
         )
     ''')
@@ -272,55 +271,54 @@ def save_inventory_to_db(product):
         QMessageBox.critical(None, "保存错误", f"保存库存数据时发生错误：{e}")
 
 # 更新库存数量
-def update_inventory(product_id, order_nb, quantity_change_cs, quantity_change_btl, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type):
+def update_inventory(product_id, order_nb, quantity_change_cs, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type, sale_date=None, sales_orders=None, operation_subtype=None ):
     try:
         conn = sqlite3.connect('orders.db')
         cursor = conn.cursor()
         
         # 查询当前库存
-        cursor.execute('SELECT "Current_Stock_CS", "Current_Stock_BTL", "BTL PER CS" FROM inventory WHERE "Product_ID" = ? AND "Order_Nb" = ?', (product_id, order_nb))
+        cursor.execute('SELECT "Current_Stock_CS", "BTL PER CS", "Sales_Orders" FROM inventory WHERE "Product_ID" = ? AND "Order_Nb" = ?', (product_id, order_nb))
         result = cursor.fetchone()
         if result:
             # 如果库存记录存在，更新库存数量
             current_stock_cs = int(result[0])
-            current_stock_btl = int(result[1])
-            current_btl_per_cs = int(result[2])
-
+            #current_btl_per_cs = int(result[1])
             new_stock_cs = current_stock_cs + quantity_change_cs
-            new_stock_btl = current_stock_btl + quantity_change_btl
 
-            # **调整负瓶数逻辑**
-            if new_stock_btl < 0:
-                # 从箱数中扣减一箱，调整瓶数
-                needed_boxes = (-new_stock_btl + current_btl_per_cs - 1) // current_btl_per_cs  # 向上取整所需箱数
-                new_stock_cs -= needed_boxes
-                new_stock_btl += needed_boxes * current_btl_per_cs
-
-            # **检查库存总瓶数逻辑**
-            #拆箱以后用不着了 total_bottles = new_stock_cs * current_btl_per_cs + new_stock_btl
-            if new_stock_cs < 0 or new_stock_btl < 0:
+            if new_stock_cs < 0: #or new_stock_btl < 0:
                 raise ValueError("库存不足，无法减少库存")
-
+            
+            # 获取当前 Sales_Orders
+            existing_sales_orders = set(result[2].split(',')) if result[2] else set()
+            if operation_subtype == 'remove_sales_order':
+                # 移除指定值
+                remove_sales_orders = set(sales_orders.split(',')) if sales_orders else set()
+                updated_sales_orders = existing_sales_orders - remove_sales_orders
+                updated_sales_orders_str = ','.join(sorted(updated_sales_orders))
+            else:
+                new_sales_orders = set(sales_orders.split(',')) if sales_orders else set()
+                updated_sales_orders_str = ','.join(sorted(existing_sales_orders.union(new_sales_orders)))
+            print(f"operation_subtype: {operation_subtype}")
             # 更新库存
-            if new_stock_cs == 0 and new_stock_btl == 0:
+            if new_stock_cs == 0: #and new_stock_btl == 0:
                 if operation_type == 'revoke_purchase_order':
                     # 撤销采购订单导致库存为零，删除库存记录
                     cursor.execute('DELETE FROM inventory WHERE "Product_ID" = ? AND "Order_Nb" = ?', (product_id, order_nb))
                 else:
                     # 正常销售导致库存为零，保留库存记录
-                    cursor.execute('UPDATE inventory SET "Current_Stock_CS" = 0, "Current_Stock_BTL" = 0, "Last_Update" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?',
-                                   (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), product_id, order_nb))
+                    cursor.execute('UPDATE inventory SET "Product_ID" = ?, "Order_Nb" = ?, "Product_Name" = ?, "SKU_CLS" = ?, "Current_Stock_CS" = 0, "BTL PER CS" = ?, "Last_Update" = ?, "Arrival_Date" = ?, "Creation_Date" = ?, "Sale_Date" = ?, "Sales_Orders" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?',
+                                   (product_id, order_nb, item_name, sku_cls, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date, sale_date or datetime.datetime.now().strftime("%Y-%m-%d"), updated_sales_orders_str, product_id, order_nb))
             else:
                 # 库存数量不为零，更新库存记录
-                cursor.execute('UPDATE inventory SET "Current_Stock_CS" = ?, "Current_Stock_BTL" = ?, "Last_Update" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?',
-                               (new_stock_cs, new_stock_btl, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), product_id, order_nb))
+                cursor.execute('UPDATE inventory SET "Product_ID" = ?, "Order_Nb" = ?, "Product_Name" = ?, "SKU_CLS" = ?, "Current_Stock_CS" = ?, "BTL PER CS" = ?, "Last_Update" = ?, "Arrival_Date" = ?, "Creation_Date" = ?, "Sale_Date" = NULL, "Sales_Orders" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?',
+                               (product_id, order_nb, item_name, sku_cls, new_stock_cs, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date, updated_sales_orders_str, product_id, order_nb))
 
         else:
             # 库存记录不存在
-            if quantity_change_cs > 0 or quantity_change_btl > 0:
+            if quantity_change_cs > 0:#or quantity_change_btl > 0:
                 # 增加库存，新增库存记录
-                cursor.execute('INSERT INTO inventory ("Product_ID", "Order_Nb", "Product_Name", "SKU_CLS", "Current_Stock_CS", "Current_Stock_BTL", "BTL PER CS", "Last_Update", "Arrival_Date", "Creation_Date") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                               (product_id, order_nb, item_name, sku_cls, quantity_change_cs, quantity_change_btl, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date))
+                cursor.execute('INSERT INTO inventory ("Product_ID", "Order_Nb", "Product_Name", "SKU_CLS", "Current_Stock_CS", "BTL PER CS", "Last_Update", "Arrival_Date", "Creation_Date") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                               (product_id, order_nb, item_name, sku_cls, quantity_change_cs, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date))
             else:
                 # 减少库存，且库存记录不存在，抛出异常
                 raise ValueError("库存中不存在该产品，无法减少库存")
@@ -343,6 +341,12 @@ def get_inventory_item(product_id, order_nb):
         if item['Product_ID'] == product_id and item['Order_Nb'] == order_nb:
             return item
     return None
+#获取产品信息
+def get_inventory_info(product_id, order_nb):
+    for item in inventory:
+        if item['Product_ID'] == product_id and item['Order_Nb'] == order_nb:
+            return item.get('Product_Name', ''), int(item.get('BTL PER CS', 0))
+    return '', 0
 
 # 更新库存中的 Arrival_Date
 def update_inventory_arrival_date(product_id, order_nb, arrival_date):
@@ -360,124 +364,11 @@ def update_inventory_arrival_date(product_id, order_nb, arrival_date):
         print(f"更新库存 Arrival_Date 时发生错误：{e}")
         raise e
 
-# 更新库存中的 Allocation 和 Sub-allocation
-def update_inventory_allocation(order_nb, allocation, sub_allocation):
-    try:
-        conn = sqlite3.connect('orders.db')
-        cursor = conn.cursor()
-        cursor.execute('UPDATE inventory SET "Allocation" = ?, "Sub-allocation" = ? WHERE "Order_Nb" = ?', (allocation, sub_allocation, order_nb))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"更新库存 Allocation 时发生错误：{e}")
-        raise e
-
-# 获取总库存
-def get_total_stock(product_id):
-    total_stock_cs = 0
-    total_stock_btl = 0
-    for item in inventory:
-        if item['Product_ID'] == product_id:
-            total_stock_cs += int(item['Current_Stock_CS'])
-            total_stock_btl += int(item['Current_Stock_BTL'])
-    return total_stock_cs, total_stock_btl
-
-# 扣减库存（用于销售订单）
-def deduct_inventory(product_id, quantity_cs_sold, quantity_btl_sold):
-    try:
-        conn = sqlite3.connect('orders.db')
-        cursor = conn.cursor()
-        btl_per_cs = get_btl_per_cs(product_id)
-        remaining_bottles_to_deduct = quantity_cs_sold * btl_per_cs + quantity_btl_sold
-        # 存储扣减详情的列表
-        deduction_details = []
-        # 获取库存记录，按 Arrival_Date 排序（先进先出）
-        cursor.execute('SELECT "Product_ID", "Order_Nb", "Current_Stock_CS", "Current_Stock_BTL", "BTL PER CS", "Arrival_Date", "Creation_Date", "Product_Name", "SKU_CLS" FROM inventory WHERE "Product_ID" = ? ORDER BY "Arrival_Date"', (product_id,))
-        rows = cursor.fetchall()
-
-        for row in rows:
-            prod_id, order_nb, current_stock_cs, current_stock_btl, btl_per_cs, arrival_date, creation_date, product_name, sku_cls = row
-            current_stock_cs = int(current_stock_cs)
-            current_stock_btl = int(current_stock_btl)
-            btl_per_cs = int(btl_per_cs)
-
-            total_bottles_in_stock = current_stock_cs * btl_per_cs + current_stock_btl
-
-            if total_bottles_in_stock == 0:
-                continue
-
-            if remaining_bottles_to_deduct <= total_bottles_in_stock:
-                # 当前库存记录足以满足扣减需求
-                deduct_btl = remaining_bottles_to_deduct
-                deduct_cs = deduct_btl // btl_per_cs
-                deduct_btl = deduct_btl % btl_per_cs
-
-                # 更新库存
-                update_inventory(
-                    prod_id,
-                    order_nb,
-                    -deduct_cs,
-                    -deduct_btl,
-                    arrival_date,
-                    creation_date,
-                    product_name,
-                    sku_cls,
-                    btl_per_cs,
-                    operation_type='sales'
-                )
-
-                # 记录扣减详情
-                deduction_details.append({
-                    'Order_Nb': order_nb,
-                    'Deduct_CS': deduct_cs,  # 转为正数
-                    'Deduct_BTL': deduct_btl
-                })
-
-                remaining_bottles_to_deduct = 0
-                break
-            else:
-                # 当前库存记录不足以满足扣减需求，扣减所有库存
-                deduct_cs = current_stock_cs
-                deduct_btl = current_stock_btl
-
-                update_inventory(
-                    prod_id,
-                    order_nb,
-                    -deduct_cs,
-                    -deduct_btl,
-                    arrival_date,
-                    creation_date,
-                    product_name,
-                    sku_cls,
-                    btl_per_cs,
-                    operation_type='sales'
-                )
-
-                # 记录扣减详情
-                deduction_details.append({
-                    'Order_Nb': order_nb,
-                    'Deduct_CS': deduct_cs,
-                    'Deduct_BTL': deduct_btl
-                })
-
-                remaining_bottles_to_deduct -= total_bottles_in_stock
-
-        if remaining_bottles_to_deduct > 0:
-            raise ValueError("库存不足，无法扣减库存")
-
-        #conn.close()
-        return deduction_details
-
-    except Exception as e:
-        print(f"扣减库存时发生错误：{e}")
-        raise e
-
 # 恢复库存（用于删除销售订单）
 def restore_inventory(sales_order):
     try:
         # 从销售订单中获取扣减详情
         deduction_details = sales_order.get('Deduction_Details', [])
-        #print(f"Deduction Details: {deduction_details}")  # 调试输出
         if not deduction_details:
             raise ValueError("销售订单中缺少扣减详情，无法恢复库存")
 
@@ -489,38 +380,50 @@ def restore_inventory(sales_order):
             product_id = sales_order['Product_ID']
             order_nb = deduction['Order_Nb']
             add_cs = deduction['Deduct_CS']
-            add_btl = deduction['Deduct_BTL']
 
             # 获取库存记录的信息
-            btl_per_cs = get_btl_per_cs(product_id)
-
-            # 获取库存记录的其他信息
             inventory_item = get_inventory_item(product_id, order_nb)
             if not inventory_item:
                 raise ValueError(f"无法找到库存记录，产品ID: {product_id}, 订单号: {order_nb}")
 
+            btl_per_cs = int(inventory_item.get('BTL PER CS', 0))
+            current_stock_cs = int(inventory_item.get('Current_Stock_CS', 0))
             arrival_date = inventory_item.get('Arrival_Date')
             creation_date = inventory_item.get('Creation_Date')
             product_name = inventory_item.get('Product_Name')
             sku_cls = inventory_item.get('SKU_CLS')
-
+            # 计算新的瓶数和箱数
+            new_stock_cs = current_stock_cs + add_cs
+            '''# 获取现有的 Sales_Orders
+            existing_sales_orders = inventory_item.get('Sales_Orders', '')
+            if existing_sales_orders:
+                # 将字符串转换为集合
+                existing_sales_orders_set = set(existing_sales_orders.split(','))
+                # 从集合中移除当前销售订单号
+                updated_sales_orders_set = existing_sales_orders_set - {sales_order['Sales_ID']}
+                # 转换回字符串
+                updated_sales_orders = ','.join(sorted(updated_sales_orders_set))
+            else:
+                updated_sales_orders = None'''
             # 更新库存
             update_inventory(
                 product_id,
                 order_nb,
-                add_cs,
-                add_btl,
+                new_stock_cs - current_stock_cs,
                 arrival_date,
                 creation_date,
                 product_name,
                 sku_cls,
                 btl_per_cs,
-                operation_type='restore_sales'
+                operation_type='restore_sales',
+                sales_orders = sales_order['Sales_ID'],
+                operation_subtype = 'remove_sales_order'
             )
 
     except Exception as e:
         print(f"恢复库存时发生错误：{e}")
         raise e
+
 
 # 根据订单号获取采购订单
 def get_purchase_order_by_nb(order_nb):

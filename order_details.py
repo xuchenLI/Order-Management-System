@@ -221,7 +221,7 @@ class OrderDetailsWindow(QWidget):
                     value = entry.text().strip()
 
                 # 处理需要整数的字段
-                if field_name in ["QUANTITY CS", "BTL PER CS"]:
+                if field_name in ["QUANTITY CS", "BTL PER CS", "SKU CLS"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
@@ -230,9 +230,14 @@ class OrderDetailsWindow(QWidget):
                     except ValueError:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 必须是一个有效的整数！")
                         return
-
+                
+                elif field_name in ["ITEM Name"]:
+                    if not value:
+                        QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
+                        return
+                
                 # 处理需要浮点数的字段
-                elif field_name in ["Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
+                elif field_name in ["ALC.", "EXW EURO", "Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
@@ -277,7 +282,6 @@ class OrderDetailsWindow(QWidget):
                 product_id,
                 new_order['Order Nb'],
                 quantity_cs,
-                0,  # 采购时，没有散装瓶，设置为 0
                 arrival_date,
                 creation_date,
                 item_name,
@@ -321,7 +325,7 @@ class OrderDetailsWindow(QWidget):
                     value = entry.text().strip()
 
                 # 处理需要整数的字段
-                if field_name in ["QUANTITY CS", "BTL PER CS"]:
+                if field_name in ["QUANTITY CS", "BTL PER CS", "SKU CLS"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
@@ -330,9 +334,14 @@ class OrderDetailsWindow(QWidget):
                     except ValueError:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 必须是一个有效的整数！")
                         return
-
+               
+                elif field_name in ["ITEM Name"]:
+                    if not value:
+                        QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
+                        return
+                
                 # 处理需要浮点数的字段
-                elif field_name in ["Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
+                elif field_name in ["ALC.", "EXW EURO", "Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
@@ -365,12 +374,15 @@ class OrderDetailsWindow(QWidget):
             item_name = updated_order.get('ITEM Name', '')
             sku_cls = updated_order.get('SKU CLS', '')
             btl_per_cs = updated_order.get('BTL PER CS', 0)
-
+            #########################################################################
+            #print("Inventory Item:", inventory_item)
+            print(f"Sku_Cls is : {sku_cls}")
+            print(f"Product_Name is : {item_name}")
+            #########################################################################
             update_inventory(
                 product_id,
                 order_nb,
                 delta_quantity_cs,
-                delta_quantity_btl,
                 arrival_date,
                 creation_date,
                 item_name,
@@ -448,7 +460,6 @@ class OrderDetailsWindow(QWidget):
                     order.get('Product_ID', ''),
                     order_nb,
                     -quantity_cs,
-                    -0,
                     order.get('Arrival_Date', ''),
                     order.get('date', ''),
                     order.get('ITEM Name', ''),
@@ -487,7 +498,6 @@ class OrderDetailsWindow(QWidget):
                 order.get('Product_ID', ''),
                 order['Order Nb'],
                 quantity_cs,
-                quantity_btl,
                 order.get('Arrival_Date', ''),
                 order.get('date', ''),
                 order.get('ITEM Name', ''),

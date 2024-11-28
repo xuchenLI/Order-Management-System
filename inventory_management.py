@@ -4,8 +4,9 @@ from PyQt6.QtWidgets import (
     QLineEdit, QHBoxLayout, QPushButton, QGridLayout, QMessageBox, QComboBox
 )
 from PyQt6.QtCore import Qt
-from data import inventory, load_inventory_from_db, update_inventory_allocation
+from data import inventory, load_inventory_from_db, data_manager
 import datetime
+from dateutil.parser import parse
 
 class InventoryManagementWindow(QWidget):
     def __init__(self):
@@ -19,27 +20,15 @@ class InventoryManagementWindow(QWidget):
         self.layout_inputs = QGridLayout()
         self.entries = {}
 
-        label_order_nb = QLabel("订单号:")
+        label_order_nb = QLabel("采购订单:")
         self.entry_order_nb = QLineEdit()
         self.entries['Order_Nb'] = self.entry_order_nb
         self.layout_inputs.addWidget(label_order_nb, 0, 0)
         self.layout_inputs.addWidget(self.entry_order_nb, 0, 1)
 
-        label_allocation = QLabel("Allocation:")
-        self.entry_allocation = QLineEdit()
-        self.entries['Allocation'] = self.entry_allocation
-        self.layout_inputs.addWidget(label_allocation, 1, 0)
-        self.layout_inputs.addWidget(self.entry_allocation, 1, 1)
-
-        label_sub_allocation = QLabel("Sub-allocation:")
-        self.entry_sub_allocation = QLineEdit()
-        self.entries['Sub_allocation'] = self.entry_sub_allocation
-        self.layout_inputs.addWidget(label_sub_allocation, 2, 0)
-        self.layout_inputs.addWidget(self.entry_sub_allocation, 2, 1)
-
         # 更新按钮
         self.button_update = QPushButton("更新")
-        self.button_update.clicked.connect(self.update_inventory_record)
+        #self.button_update.clicked.connect(self.update_inventory_record)
         self.layout_inputs.addWidget(self.button_update, 3, 0, 1, 2)
 
         self.layout_main.addLayout(self.layout_inputs)
@@ -64,10 +53,10 @@ class InventoryManagementWindow(QWidget):
         self.detail_inventory_table = QTableWidget()
         self.detail_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.detail_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.detail_inventory_table.setColumnCount(13)
+        self.detail_inventory_table.setColumnCount(12)
         self.detail_inventory_table.setHorizontalHeaderLabels([
-            'Order Type', 'Allocation', 'Sub-allocation', '订单号', '产品编号', 'SKU CLS', '产品名称',
-            '库存-箱数', '库存-瓶数', '总瓶数','库存天数', '到仓库日期', '创建日期'
+            'Order Type', '采购订单','销售订单', '产品编号', 'SKU CLS', '产品名称',
+            '库存-箱数', '总瓶数','库存天数', '到仓库日期', '创建日期', '售空日期'
         ])
         self.detail_inventory_table.verticalHeader().setVisible(False)
         self.detail_inventory_table.horizontalHeader().setStretchLastSection(True)
@@ -85,8 +74,8 @@ class InventoryManagementWindow(QWidget):
         self.total_inventory_table = QTableWidget()
         self.total_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.total_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.total_inventory_table.setColumnCount(5)
-        self.total_inventory_table.setHorizontalHeaderLabels(['产品编号', 'SKU CLS', '产品名称', '库存-箱数', '库存-瓶数'])
+        self.total_inventory_table.setColumnCount(7)
+        self.total_inventory_table.setHorizontalHeaderLabels(['产品编号', '采购订单', '销售订单', 'SKU CLS', '产品名称', '库存-箱数','库存-总瓶数'])
         self.total_inventory_table.verticalHeader().setVisible(False)
         self.total_inventory_table.horizontalHeader().setStretchLastSection(True)
         self.total_inventory_table.setWordWrap(True)
@@ -98,9 +87,13 @@ class InventoryManagementWindow(QWidget):
 
         # 连接选择信号到处理函数
         self.detail_inventory_table.selectionModel().selectionChanged.connect(self.on_order_selected)
-
+        # 连接数据变化信号到更新方法
+        data_manager.inventory_changed.connect(self.on_inventory_changed)
         # 加载库存数据
         load_inventory_from_db()
+        self.update_inventory_tables()
+
+    def on_inventory_changed(self):
         self.update_inventory_tables()
 
     def on_order_selected(self, selected, deselected):
@@ -110,41 +103,6 @@ class InventoryManagementWindow(QWidget):
             row = index.row()
             order_nb = self.detail_inventory_table.item(row, 3).text()
             self.entry_order_nb.setText(order_nb)
-            allocation = self.detail_inventory_table.item(row, 1).text()
-            sub_allocation = self.detail_inventory_table.item(row, 2).text()
-            self.entry_allocation.setText(allocation)
-            self.entry_sub_allocation.setText(sub_allocation)
-
-    def update_inventory_record(self):
-        order_nb = self.entry_order_nb.text().strip()
-        allocation = self.entry_allocation.text().strip()
-        sub_allocation = self.entry_sub_allocation.text().strip()
-
-        if not order_nb:
-            QMessageBox.warning(self, "更新错误", "请输入订单号！")
-            return
-
-        try:
-            # 更新库存记录
-            # 找到对应的库存记录
-            inventory_record = next((item for item in inventory if item['Order_Nb'] == order_nb), None)
-            if not inventory_record:
-                QMessageBox.warning(self, "更新错误", "未找到对应的库存记录！")
-                return
-
-            # 更新数据库
-            update_inventory_allocation(order_nb, allocation, sub_allocation)
-
-            # 更新内存中的 inventory 列表
-            load_inventory_from_db()
-
-            # 更新表格显示
-            self.update_inventory_tables()
-    
-            QMessageBox.information(self, "成功", "库存记录已更新！")
-        except Exception as e:
-            print(f"更新库存记录时发生错误：{e}")
-            QMessageBox.critical(self, "错误", f"更新库存记录时发生错误：{e}")
 
     def update_inventory_tables(self):
         # 获取当前选择的过滤类型
@@ -155,58 +113,103 @@ class InventoryManagementWindow(QWidget):
         else:
             filtered_inventory = [item for item in inventory if item.get('Order_Type', '') == selected_filter]
 
+        # 建立订单号到销售订单的映射
+        order_nb_to_sales_orders = {}
+        for item in filtered_inventory:
+            order_nb = item['Order_Nb']
+            sales_order = item.get('Sales_Orders', '')
+            if order_nb not in order_nb_to_sales_orders:
+                order_nb_to_sales_orders[order_nb] = set()
+            if sales_order:
+                order_nb_to_sales_orders[order_nb].update(
+                    [s.strip() for s in sales_order.split(',')]
+                )
+
         # 更新明细表
         self.detail_inventory_table.setRowCount(0)
         self.detail_inventory_table.setRowCount(len(filtered_inventory))
         for row, product in enumerate(filtered_inventory):
             self.detail_inventory_table.setItem(row, 0, QTableWidgetItem(product.get('Order_Type', '')))
-            self.detail_inventory_table.setItem(row, 1, QTableWidgetItem(product.get('Allocation', '')))
-            self.detail_inventory_table.setItem(row, 2, QTableWidgetItem(product.get('Sub-allocation', '')))
-            self.detail_inventory_table.setItem(row, 3, QTableWidgetItem(product['Order_Nb']))
-            self.detail_inventory_table.setItem(row, 4, QTableWidgetItem(product['Product_ID']))
-            self.detail_inventory_table.setItem(row, 5, QTableWidgetItem(product.get('SKU_CLS', '')))
-            self.detail_inventory_table.setItem(row, 6, QTableWidgetItem(product['Product_Name']))
-            self.detail_inventory_table.setItem(row, 7, QTableWidgetItem(str(product['Current_Stock_CS'])))
-            self.detail_inventory_table.setItem(row, 8, QTableWidgetItem(str(product['Current_Stock_BTL'])))
+            self.detail_inventory_table.setItem(row, 1, QTableWidgetItem(product['Order_Nb']))
+            self.detail_inventory_table.setItem(row, 3, QTableWidgetItem(product['Product_ID']))
+            self.detail_inventory_table.setItem(row, 4, QTableWidgetItem(product.get('SKU_CLS', '')))
+            self.detail_inventory_table.setItem(row, 5, QTableWidgetItem(product['Product_Name']))
+            self.detail_inventory_table.setItem(row, 6, QTableWidgetItem(str(product['Current_Stock_CS'])))
             # 计算总瓶数
             btl_per_cs = int(product.get('BTL PER CS', 0))
-            total_btl = int(product['Current_Stock_CS']) * btl_per_cs + int(product['Current_Stock_BTL'])
-            self.detail_inventory_table.setItem(row, 9, QTableWidgetItem(str(total_btl)))
+            total_btl = int(product['Current_Stock_CS']) * btl_per_cs
+            self.detail_inventory_table.setItem(row, 7, QTableWidgetItem(str(total_btl)))
             # 计算库存天数
             arrival_date_str = product.get('Arrival_Date', '')
+            sale_date_str = product.get('Sale_Date', '')
             if arrival_date_str:
-                arrival_date = datetime.datetime.strptime(arrival_date_str, "%Y-%m-%d")
-                delta_days = (datetime.datetime.now() - arrival_date).days
-                self.detail_inventory_table.setItem(row, 10, QTableWidgetItem(str(delta_days)))
-            else:
-                self.detail_inventory_table.setItem(row, 10, QTableWidgetItem("N/A"))
+                arrival_date = parse(arrival_date_str)
+                if sale_date_str:
+                    sale_date = parse(sale_date_str)
+                    delta_days = (sale_date - arrival_date).days
+                else:
+                    delta_days = (datetime.datetime.now() - arrival_date).days
 
-            self.detail_inventory_table.setItem(row, 11, QTableWidgetItem(product.get('Arrival_Date', '')))
-            self.detail_inventory_table.setItem(row, 12, QTableWidgetItem(product.get('Creation_Date', '')))
+                self.detail_inventory_table.setItem(row, 8, QTableWidgetItem(str(delta_days)))
+            else:
+                self.detail_inventory_table.setItem(row, 8, QTableWidgetItem("N/A"))
+
+            self.detail_inventory_table.setItem(row, 9, QTableWidgetItem(product.get('Arrival_Date', '')))
+            self.detail_inventory_table.setItem(row, 10, QTableWidgetItem(product.get('Creation_Date', '')))
+            self.detail_inventory_table.setItem(row, 11, QTableWidgetItem(product.get('Sale_Date', '')))
+
+            # 获取对应订单号的销售订单
+            sales_orders = order_nb_to_sales_orders.get(product['Order_Nb'], set())
+            sales_order_str = ', '.join(sorted(sales_orders))
+            self.detail_inventory_table.setItem(row, 2, QTableWidgetItem(sales_order_str))
 
         # 更新总览表
         total_inventory = {}
         for product in filtered_inventory:
             product_id = product['Product_ID']
+            order_nb = product.get('Order_Nb', '')
+            sales_order = product.get('Sales_Orders', '')
             sku_cls = product.get('SKU_CLS', '')
-            key = (product_id, sku_cls)
-            if key not in total_inventory:
-                total_inventory[key] = {
+            product_name = product['Product_Name']
+            current_stock_cs = int(product['Current_Stock_CS'])
+            btl_per_cs = int(product.get('BTL PER CS', 0))
+            current_stock_btl = current_stock_cs * btl_per_cs
+            if product_id not in total_inventory:
+                total_inventory[product_id] = {
                     'Product_ID': product_id,
+                    'Order_Nb_Set': set([order_nb]),
+                    'Sales_Order_Set': set(),
                     'SKU_CLS': sku_cls,
-                    'Product_Name': product['Product_Name'],
-                    'Current_Stock_CS': int(product['Current_Stock_CS']),
-                    'Current_Stock_BTL': int(product['Current_Stock_BTL'])
+                    'Product_Name': product_name,
+                    'Current_Stock_CS': current_stock_cs,
+                    'Current_Stock_BTL': current_stock_btl
                 }
             else:
-                total_inventory[key]['Current_Stock_CS'] += int(product['Current_Stock_CS'])
-                total_inventory[key]['Current_Stock_BTL'] += int(product['Current_Stock_BTL'])
+                total_inventory[product_id]['Order_Nb_Set'].add(order_nb)
+                total_inventory[product_id]['Current_Stock_CS'] += current_stock_cs
+                total_inventory[product_id]['Current_Stock_BTL'] += current_stock_btl
 
+            # 收集销售订单
+            if sales_order:
+                total_inventory[product_id]['Sales_Order_Set'].update(
+                    [s.strip() for s in sales_order.split(',')]
+                )
+
+        # 将聚合后的数据转换为列表
+        total_inventory_list = list(total_inventory.values())
+
+        # 更新总览表
         self.total_inventory_table.setRowCount(0)
-        self.total_inventory_table.setRowCount(len(total_inventory))
-        for row, product in enumerate(total_inventory.values()):
+        self.total_inventory_table.setRowCount(len(total_inventory_list))
+        for row, product in enumerate(total_inventory_list):
             self.total_inventory_table.setItem(row, 0, QTableWidgetItem(product['Product_ID']))
-            self.total_inventory_table.setItem(row, 1, QTableWidgetItem(product.get('SKU_CLS', '')))
-            self.total_inventory_table.setItem(row, 2, QTableWidgetItem(product['Product_Name']))
-            self.total_inventory_table.setItem(row, 3, QTableWidgetItem(str(product['Current_Stock_CS'])))
-            self.total_inventory_table.setItem(row, 4, QTableWidgetItem(str(product['Current_Stock_BTL'])))
+            order_nb_str = ', '.join(sorted(product['Order_Nb_Set']))
+            self.total_inventory_table.setItem(row, 1, QTableWidgetItem(order_nb_str))
+            self.total_inventory_table.setItem(row, 3, QTableWidgetItem(product.get('SKU_CLS', '')))
+            self.total_inventory_table.setItem(row, 4, QTableWidgetItem(product['Product_Name']))
+            self.total_inventory_table.setItem(row, 5, QTableWidgetItem(str(product['Current_Stock_CS'])))
+            self.total_inventory_table.setItem(row, 6, QTableWidgetItem(str(product['Current_Stock_BTL'])))
+
+            # 展示销售订单
+            sales_order_str = ', '.join(sorted(product['Sales_Order_Set']))
+            self.total_inventory_table.setItem(row, 2, QTableWidgetItem(sales_order_str))
