@@ -10,6 +10,7 @@ purchase_orders = []
 sales_orders = []
 inventory = []
 deleted_orders = []
+products = []
 db_fields = [
     ("订单号", "Order Nb"),
     ("Product_ID", "Product_ID"),
@@ -24,7 +25,7 @@ db_fields = [
     ("Supplier", "Supplier"),
     ("BCMB", "BCMB"),
     ("SKU CLS", "SKU CLS"),
-    ("Supplier Order Number", "Supplier Order Number"),
+    ("供应商发票号", "Supplier Order Number"),
     ("ITEM Name", "ITEM Name"),
     ("CATEGORY", "CATEGORY"),
     ("SIZE", "SIZE"),
@@ -43,15 +44,15 @@ db_fields = [
     ("INVOICE PRICE", "INVOICE PRICE"),
     ("INVOICE CS", "INVOICE CS"),
     ("Date", "date"),
-    # 新增字段
-    ("产品到仓库的日期", "Arrival_Date"),
+    ("UCC14", "UCC14"),
+    ("UCC13", "UCC13"),
 ]
 
 # 数据管理器，用于发射数据变化信号
 class DataManager(QObject):
     data_changed = pyqtSignal()
     inventory_changed = pyqtSignal()
-
+    products_changed = pyqtSignal()
     def __init__(self):
         super().__init__()
 
@@ -106,10 +107,23 @@ def initialize_database():
             "Creation_Date" TEXT,
             "Sale_Date" TEXT,
             "Sales_Orders" TEXT,
+            "Pick_up_Date" TEXT,
             PRIMARY KEY ("Product_ID", "Order_Nb")
         )
     ''')
-
+    #创建产品表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            "SKU_CLS" TEXT PRIMARY KEY,
+            "ITEM_Name" TEXT,
+            "Category" TEXT,
+            "Size" REAL,
+            "ALC" REAL,
+            "BTL_PER_CS" INTEGER,
+            "Supplier" TEXT,
+            "Creation_Date" TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -271,7 +285,7 @@ def save_inventory_to_db(product):
         QMessageBox.critical(None, "保存错误", f"保存库存数据时发生错误：{e}")
 
 # 更新库存数量
-def update_inventory(product_id, order_nb, quantity_change_cs, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type, sale_date=None, sales_orders=None, operation_subtype=None ):
+def update_inventory(product_id, order_nb, quantity_change_cs, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type, sale_date=None, sales_orders=None, operation_subtype=None, Pick_up_Date=None ):
     try:
         conn = sqlite3.connect('orders.db')
         cursor = conn.cursor()
@@ -464,3 +478,92 @@ def get_WHOLESALE_BTL_price(product_id):
         #print(f"获取到的WHOLESALE BTL 为：{wholesale_btl}")
     else:
         return 0.0
+
+# 加载产品数据
+def load_products_from_db():
+    try:
+        conn = sqlite3.connect('orders.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM products')
+        rows = cursor.fetchall()
+        conn.close()
+
+        products.clear()
+        for row in rows:
+            product = {}
+            for idx, field in enumerate(cursor.description):
+                field_name = field[0]
+                product[field_name] = row[idx] if row[idx] is not None else ''
+            products.append(product)
+    except Exception as e:
+        print(f"无法从数据库加载产品数据：{e}")
+        QMessageBox.critical(None, "加载错误", f"无法从数据库加载产品数据：{e}")
+
+# 保存产品
+def save_product_to_db(product):
+    try:
+        conn = sqlite3.connect('orders.db')
+        cursor = conn.cursor()
+        placeholders = ', '.join(['?' for _ in product.keys()])
+        field_names = ', '.join([f'"{key}"' for key in product.keys()])
+        values = list(product.values())
+
+        cursor.execute(f'''
+            INSERT OR REPLACE INTO products ({field_names})
+            VALUES ({placeholders})
+        ''', values)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"保存产品时发生错误：{e}")
+        QMessageBox.critical(None, "保存错误", f"保存产品时发生错误：{e}")
+
+# 删除产品
+def delete_product_from_db(sku_cls):
+    try:
+        conn = sqlite3.connect('orders.db')
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM products WHERE "SKU_CLS" = ?', (sku_cls,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"删除产品时发生错误：{e}")
+        QMessageBox.critical(None, "删除错误", f"删除产品时发生错误：{e}")
+
+# 根据 SKU_CLS 获取产品
+def get_product_by_sku(sku_cls):
+    return next((product for product in products if product['SKU_CLS'] == sku_cls), None)
+
+# 在采购订单添加时检查并添加新产品
+def check_and_add_new_product(order):
+    sku_cls = str(order.get('SKU CLS', '')).strip()
+    product = get_product_by_sku(sku_cls)
+    if not product:
+        # 产品不存在，自动添加到产品列表
+        new_product = {
+            'SKU_CLS': sku_cls,
+            'ITEM_Name': order.get('ITEM Name', ''),
+            'Category': order.get('CATEGORY', ''),
+            'Size': float(order.get('SIZE', 0)),
+            'ALC': float(order.get('ALC.', 0)),
+            'BTL_PER_CS': int(order.get('BTL PER CS', 0)),
+            'Supplier': order.get('Supplier', ''),
+            'Creation_Date': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        products.append(new_product)
+        save_product_to_db(new_product)
+        data_manager.products_changed.emit()
+        QMessageBox.information(None, "新产品添加", f"产品 {sku_cls} 为新产品，已自动添加到产品列表中。")
+    else:
+        # 产品已存在，验证信息一致性
+        inconsistencies = []
+        fields_to_check = ['ITEM_Name', 'Category', 'Size', 'ALC', 'BTL_PER_CS', 'Supplier']
+        for field in fields_to_check:
+            order_field = order.get(field.replace('_', ' '), '')
+            product_field = product.get(field, '')
+            if str(order_field).strip() != str(product_field).strip():
+                print(f"order_field{order_field}")
+                print(f"order_field{product_field}")
+                inconsistencies.append(field)
+        if inconsistencies:
+            QMessageBox.warning(None, "产品信息不一致", f"产品 {sku_cls} 的以下信息与产品列表不一致：{', '.join(inconsistencies)}。请检查。")

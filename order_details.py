@@ -2,17 +2,22 @@
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox
+    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox, QFileDialog
 )
 from PyQt6.QtCore import Qt
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 
 from data import (
     purchase_orders, deleted_orders, db_fields, delete_purchase_order_from_db,
     save_purchase_order_to_db, data_manager, update_inventory, inventory,
-    update_inventory_arrival_date, get_purchase_order_by_nb
+    update_inventory_arrival_date, get_purchase_order_by_nb, products, get_product_by_sku, save_product_to_db,
+    load_products_from_db
 )
 from price_calculator import open_price_calculator
+import json
+import re
 
 class OrderDetailsWindow(QWidget):
     def __init__(self):
@@ -39,7 +44,8 @@ class OrderDetailsWindow(QWidget):
             ('EXW 汇率', 'EXW Exchange Rate'),
             ('国际运费汇率', 'International Freight Exchange Rate'),
             # 新增字段
-            ("产品到仓库的日期", "Arrival_Date"),
+            ("UCC14", "UCC14"),
+            ("UCC13", "UCC13"),
         ]
 
         # 右侧字段
@@ -150,6 +156,9 @@ class OrderDetailsWindow(QWidget):
         button_price_calculator = QPushButton("价格计算器")
         button_price_calculator.clicked.connect(lambda: self.open_price_calculator())
 
+        button_compare = QPushButton("比较注册信息")  # 新增按钮
+        button_compare.clicked.connect(self.compare_with_registration_file)
+
         layout_buttons.addWidget(self.button_add)
         layout_buttons.addWidget(self.button_update)
         layout_buttons.addWidget(button_search)
@@ -159,6 +168,7 @@ class OrderDetailsWindow(QWidget):
         layout_buttons.addWidget(undo_button)
         layout_buttons.addWidget(button_export)
         layout_buttons.addWidget(button_price_calculator)
+        layout_buttons.addWidget(button_compare)
 
         self.layout_main.addLayout(layout_buttons)
 
@@ -220,63 +230,80 @@ class OrderDetailsWindow(QWidget):
                 else:
                     value = entry.text().strip()
 
-                # 处理需要整数的字段
-                if field_name in ["QUANTITY CS", "BTL PER CS", "SKU CLS"]:
+                # 数据校验逻辑调整：SKU CLS 应为字符串，不进行整数转换
+                # QUANTITY CS 和 BTL PER CS 为整数字段
+                # ITEM Name 必填
+                # 其他浮点字段进行浮点验证
+
+                if field_name == "SKU CLS":
+                    if not value:
+                        QMessageBox.warning(self, "输入错误", "SKU CLS 不能为空！")
+                        return
+                    # SKU CLS 作为字符串，不转换为整数
+
+                elif field_name in ["QUANTITY CS", "BTL PER CS"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
                     try:
-                        value = int(value)  # 转换为整数
+                        value = int(value)
                     except ValueError:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 必须是一个有效的整数！")
                         return
-                
-                elif field_name in ["ITEM Name"]:
+
+                elif field_name == "ITEM Name":
                     if not value:
-                        QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
+                        QMessageBox.warning(self, "输入错误", "ITEM Name 不能为空！")
                         return
-                
-                # 处理需要浮点数的字段
-                elif field_name in ["ALC.", "EXW EURO", "Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
+
+                elif field_name in ["ALC.", "EXW EURO", "Expected Profit", "Domestic Freight CAD", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
                     try:
-                        value = float(value)  # 转换为浮点数
+                        value = float(value)
                     except ValueError:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 必须是一个有效的数字！")
                         return
 
                 new_order[field_name] = value
 
-            # 自动添加日期
+            # 添加日期
             new_order['date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 检查订单号是否为空
+            # 基本检查
             if not new_order['Order Nb']:
                 QMessageBox.warning(self, "添加失败", "订单号不能为空！")
                 return
 
-            # 检查产品编号是否为空
             product_id = new_order.get('Product_ID', '')
             if not product_id:
                 QMessageBox.warning(self, "添加失败", "产品编号不能为空！")
                 return
 
-            # 检查订单号是否已存在
             if any(order['Order Nb'] == new_order['Order Nb'] for order in purchase_orders):
                 QMessageBox.warning(self, "添加失败", "该订单号已存在！")
                 return
 
-            # 更新库存
+            # 在添加订单前，先检查 SKU CLS 对应的产品是否存在
+            sku_cls = str(new_order.get('SKU CLS', '')).strip()
+            product = get_product_by_sku(sku_cls)
+            if not product:
+                # 产品不存在，尝试添加产品
+                if not self.attempt_add_product_to_management(new_order):
+                    # 添加产品失败，直接返回
+                    return
+                else:
+                    # 产品添加成功或者已存在了，现在继续添加订单
+                    pass
+
+            # 此时产品已存在，可以继续更新库存和保存订单
             quantity_cs = int(new_order.get('QUANTITY CS', 0))
             btl_per_cs = int(new_order.get('BTL PER CS', 0))
-            quantity_btl = quantity_cs * btl_per_cs
-
             arrival_date = new_order.get('Arrival_Date', '')
             creation_date = new_order.get('date', '')
             item_name = new_order.get('ITEM Name', '')
-            sku_cls = new_order.get('SKU CLS', '')
+            sku_cls = str(new_order.get('SKU CLS', '')).strip()
 
             update_inventory(
                 product_id,
@@ -290,18 +317,77 @@ class OrderDetailsWindow(QWidget):
                 operation_type='add_purchase_order'
             )
 
-            # 保存采购订单
             purchase_orders.append(new_order)
             save_purchase_order_to_db(new_order)
             data_manager.data_changed.emit()
 
             self.update_order_table()
-
             QMessageBox.information(self, "成功", f"订单 {new_order['Order Nb']} 已添加。")
 
         except Exception as e:
             print(f"添加订单时发生错误：{e}")
             QMessageBox.critical(self, "错误", f"添加订单时发生错误：{e}")
+
+    def attempt_add_product_to_management(self, order_data):
+        """尝试将订单中的产品信息添加到产品列表中（product management）。
+           如果添加成功返回 True，失败返回 False。"""
+        try:
+            # 从订单中获取产品必需信息
+            sku_cls = str(order_data.get('SKU CLS', '')).strip()
+            item_name = str(order_data.get('ITEM Name', '')).strip()
+            category = str(order_data.get('CATEGORY', '')).strip()
+            size_str = str(order_data.get('SIZE', '')).strip()
+            alc_str = str(order_data.get('ALC.', '')).strip()
+            btl_per_cs_str = str(order_data.get('BTL PER CS', '')).strip()
+            supplier = str(order_data.get('Supplier', '')).strip()
+
+            # 检查必填字段
+            if not sku_cls or not item_name or not category or not size_str or not alc_str or not btl_per_cs_str or not supplier:
+                QMessageBox.warning(self, "添加产品失败", "产品信息不完整，无法添加到产品列表中。")
+                return False
+
+            # 转换数据类型
+            try:
+                size = float(size_str)
+                alc = float(alc_str)
+                btl_per_cs = int(btl_per_cs_str)
+            except ValueError:
+                QMessageBox.warning(self, "添加产品失败", "Size、ALC、BTL PER CS 必须是有效的数字！")
+                return False
+
+            # 检查 SKU_CLS 是否已存在
+            if get_product_by_sku(sku_cls) is not None:
+                # 已存在，无需重复添加
+                return True
+
+            new_product = {
+                'SKU_CLS': sku_cls,
+                'ITEM_Name': item_name,
+                'Category': category,
+                'Size': size,
+                'ALC': alc,
+                'BTL_PER_CS': btl_per_cs,
+                'Supplier': supplier,
+                'Creation_Date': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            save_product_to_db(new_product)
+
+            # 刷新产品列表
+            load_products_from_db()
+
+            # 确认添加成功
+            if get_product_by_sku(sku_cls) is not None:
+                QMessageBox.information(self, "提示", f"产品 {sku_cls} 已成功添加到产品列表中。")
+                return True
+            else:
+                QMessageBox.warning(self, "添加产品失败", "无法在产品列表中找到新添加的产品，请检查数据。")
+                return False
+
+        except Exception as e:
+            print(f"尝试添加产品到产品管理时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"添加产品到产品列表时发生错误：{e}")
+            return False
 
     def update_order(self):
         try:
@@ -374,11 +460,7 @@ class OrderDetailsWindow(QWidget):
             item_name = updated_order.get('ITEM Name', '')
             sku_cls = updated_order.get('SKU CLS', '')
             btl_per_cs = updated_order.get('BTL PER CS', 0)
-            #########################################################################
-            #print("Inventory Item:", inventory_item)
-            print(f"Sku_Cls is : {sku_cls}")
-            print(f"Product_Name is : {item_name}")
-            #########################################################################
+
             update_inventory(
                 product_id,
                 order_nb,
@@ -552,3 +634,150 @@ class OrderDetailsWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.update_order_table()
+
+    def compare_with_registration_file(self):
+        try:
+            # 获取选定的采购订单
+            selected_rows = self.order_table.selectionModel().selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(self, "提示", "请先选择要比较的采购订单（可多选）。")
+                return
+
+            selected_orders = []
+            for index in selected_rows:
+                row = index.row()
+                order = purchase_orders[row]
+                selected_orders.append(order)
+
+            # 让用户选择注册文件（Excel 格式）
+            options = QFileDialog.Option.DontUseNativeDialog
+            file_name, _ = QFileDialog.getOpenFileName(
+                self, "选择注册文件", "", "Excel Files (*.xlsx);;All Files (*)", options=options)
+
+            if not file_name:
+                return
+
+            # 读取注册文件
+            registration_df = pd.read_excel(file_name)
+
+            # 将列名统一转换为小写
+            registration_df.columns = registration_df.columns.str.lower()
+
+            # 打印列名调试
+            print("读取的注册文件列名：", registration_df.columns.tolist())
+
+            # 确保 'sku cls' 字段存在
+            if 'sku cls' not in registration_df.columns:
+                QMessageBox.warning(self, "错误", "注册文件中缺少 'SKU CLS' 列。")
+                return
+
+            # 将 SKU CLS 转为字符串并统一为小写，便于匹配
+            registration_df['sku cls'] = registration_df['sku cls'].astype(str).str.strip().str.lower()
+
+            # 创建一个字典，存储采购订单中的信息，键为 SKU CLS（统一转换为小写）
+            po_data = {}
+            for order in selected_orders:
+                sku_cls = str(order.get('SKU CLS', '')).strip().lower()  # 转换为小写
+                po_data[sku_cls] = {
+                    'category_po': order.get('CATEGORY', ''),
+                    'size_po': order.get('SIZE', ''),
+                    'alc_po': order.get('ALC.', ''),
+                    'btl per cs_po': order.get('BTL PER CS', ''),
+                    'wholesale cs_po': order.get('WHOLESALE CS', ''),
+                    'supplier_po': order.get('Supplier', ''),
+                    'item name_po': order.get('ITEM Name', ''),
+                    'ucc14_po': order.get('UCC14', ''),
+                    'ucc13_po': order.get('UCC13', '')
+                }
+
+
+                # 打印 po_data
+                print("采购订单数据 po_data：", json.dumps(po_data, indent=2, ensure_ascii=False))
+
+
+            # 需要比较的字段（统一小写以匹配列名）
+            fields_to_compare = ['category', 'size', 'alc', 'btl per cs', 'wholesale cs', 'supplier', 'item name', 'ucc14', 'ucc13' ]
+
+            # 在 DataFrame 中插入采购订单的信息
+            for field in fields_to_compare:
+                po_field = f"{field}_po"
+                # 如果原始注册文件中没有对应的列，跳过
+                if field not in registration_df.columns:
+                    QMessageBox.warning(self, "错误", f"注册文件中缺少 '{field}' 列。")
+                    return
+                # 在对应的列右侧插入新列
+                col_index = registration_df.columns.get_loc(field) + 1
+                registration_df.insert(col_index, po_field, "")
+
+            # 遍历注册文件，填入采购订单的信息并比较
+            for idx, row in registration_df.iterrows():
+                sku_cls = str(row.get('sku cls', '')).strip().lower()  # 转换为小写
+                print(f"注册文件 SKU CLS: {sku_cls}")
+                if sku_cls in po_data:
+                    print(f"匹配到的采购订单信息: {po_data[sku_cls]}")
+                    for field in fields_to_compare:
+                        po_field = f"{field}_po"
+                        po_value = po_data[sku_cls].get(f"{field}_PO", '')  # 从 po_data 获取值
+                        print(f"填入 {field}_PO 的值: {po_value}")
+                        registration_df.at[idx, po_field] = po_data[sku_cls].get(f"{field}_po", '')
+                else:
+                    print(f"未匹配到采购订单信息: {sku_cls}")
+
+            # 保存修改后的 DataFrame 到临时 Excel 文件，以便使用 openpyxl 进行样式处理
+            temp_file = 'temp_registration.xlsx'
+            registration_df.to_excel(temp_file, index=False)
+
+            # 使用 openpyxl 打开临时文件，处理样式
+            wb = load_workbook(temp_file)
+            ws = wb.active
+
+            # 定义高亮样式RFA
+            fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+
+            # 比较并高亮不一致的单元格
+            for idx, row in registration_df.iterrows():
+                excel_row = idx + 2  # DataFrame 的索引从 0 开始，Excel 的行从 1 开始，且有标题行
+                sku_cls = str(row.get('sku cls', '')).strip().lower()  # 转换为小写
+                if sku_cls in po_data:
+                    for field in fields_to_compare:
+                        po_field = f"{field}_po"
+                        reg_value = str(row.get(field, '')).strip()
+                        po_value = str(row.get(po_field, '')).strip()
+                        if reg_value != po_value:
+                            # 高亮注册文件的原始值
+                            col_index_reg = registration_df.columns.get_loc(field) + 1  # DataFrame 列索引从 0 开始
+                            cell_reg = ws.cell(row=excel_row, column=col_index_reg)
+                            cell_reg.fill = fill
+                            # 高亮采购订单的值
+                            col_index_po = registration_df.columns.get_loc(po_field) + 1
+                            cell_po = ws.cell(row=excel_row, column=col_index_po)
+                            cell_po.fill = fill
+
+            # 让用户选择保存文件的位置
+            save_file_name, _ = QFileDialog.getSaveFileName(
+                self, "保存比较结果", "", "Excel Files (*.xlsx);;All Files (*)", options=options)
+
+
+
+            print("注册文件列名：", registration_df.columns.tolist())
+            print("插入后的列名：", registration_df.columns.tolist())
+
+
+            if not save_file_name:
+                return
+
+            if not save_file_name.endswith('.xlsx'):
+                save_file_name += '.xlsx'
+
+            # 保存处理后的工作簿
+            wb.save(save_file_name)
+
+            # 删除临时文件
+            import os
+            os.remove(temp_file)
+
+            QMessageBox.information(self, "成功", f"比较完成，结果已保存到 {save_file_name}")
+
+        except Exception as e:
+            print(f"比较时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"比较时发生错误：{e}")

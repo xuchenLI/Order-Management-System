@@ -9,11 +9,13 @@ from data import (
     initialize_database,
     load_purchase_orders_from_db,
     load_sales_orders_from_db,
-    load_inventory_from_db
+    load_inventory_from_db,
+    load_products_from_db  # 新增
 )
 from order_details import OrderDetailsWindow
 from inventory_management import InventoryManagementWindow
 from sales_order import SalesOrderWindow
+from product_management import ProductManagementWindow  # 新增
 
 # 创建主窗口
 app = QApplication(sys.argv)
@@ -26,6 +28,7 @@ initialize_database()
 load_purchase_orders_from_db()
 load_sales_orders_from_db()
 load_inventory_from_db()
+load_products_from_db()  # 新增
 
 # 布局设置
 layout_main = QVBoxLayout()
@@ -42,9 +45,13 @@ button_sales_order.clicked.connect(lambda: open_sales_order_window())
 button_inventory_management = QPushButton("库存管理")
 button_inventory_management.clicked.connect(lambda: open_inventory_management_window())
 
+button_product_management = QPushButton("产品管理")  # 新增
+button_product_management.clicked.connect(lambda: open_product_management_window())  # 新增
+
 layout_buttons.addWidget(button_order_details)
 layout_buttons.addWidget(button_sales_order)
 layout_buttons.addWidget(button_inventory_management)
+layout_buttons.addWidget(button_product_management)  # 新增
 
 layout_main.addLayout(layout_buttons)
 
@@ -52,6 +59,7 @@ layout_main.addLayout(layout_buttons)
 order_details_window = None
 sales_order_window = None
 inventory_management_window = None
+product_management_window = None  # 新增
 
 # 打开采购订单窗口
 def open_order_details_window():
@@ -91,6 +99,19 @@ def open_inventory_management_window():
     except Exception as e:
         print(f"打开库存管理窗口时发生错误：{e}")
         QMessageBox.critical(None, "错误", f"打开库存管理窗口时发生错误：{e}")
+
+# 打开产品管理窗口
+def open_product_management_window():
+    global product_management_window
+    try:
+        if product_management_window is None:
+            product_management_window = ProductManagementWindow()
+        else:
+            product_management_window.update_product_table()
+        product_management_window.show()
+    except Exception as e:
+        print(f"打开产品管理窗口时发生错误：{e}")
+        QMessageBox.critical(None, "错误", f"打开产品管理窗口时发生错误：{e}")
 
 # 设置主布局
 window.setLayout(layout_main)
