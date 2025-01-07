@@ -1,386 +1,3 @@
-# inventory_management.py
-
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QLabel,
-    QLineEdit, QHBoxLayout, QPushButton, QGridLayout, QMessageBox, QComboBox,
-    QHeaderView, QFormLayout, QSpacerItem, QSizePolicy
-)
-from PyQt6.QtCore import Qt
-from data import inventory, load_inventory_from_db, data_manager, save_inventory_to_db
-import datetime
-import re
-from dateutil.parser import parse
-
-class InventoryManagementWindow(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("库存管理")
-        self.setGeometry(300, 300, 1000, 600)
-
-        self.layout_main = QVBoxLayout()
-
-        # 输入区域
-        self.layout_inputs = QFormLayout()
-        self.entries = {}
-
-        # 调整间距
-        self.layout_inputs.setSpacing(5)
-        self.layout_inputs.setContentsMargins(0, 0, 0, 0)
-
-        # 修改后的“到货日期”输入项
-        label_arrival_date = QLabel("到货日期:")
-        self.entry_arrival_date = QLineEdit()
-        self.entry_arrival_date.setPlaceholderText("YYYY-MM-DD")
-        self.entries['Arrival_Date'] = self.entry_arrival_date
-        self.layout_inputs.addRow(label_arrival_date, self.entry_arrival_date)
-        self.entry_arrival_date.setFixedWidth(120)
-
-        # 新增的“提货日期”输入项
-        label_pickup_date = QLabel("提货日期:")
-        self.entry_pickup_date = QLineEdit()
-        self.entry_pickup_date.setPlaceholderText("YYYY-MM-DD")
-        self.entries['Pick_up_Date'] = self.entry_pickup_date
-        self.layout_inputs.addRow(label_pickup_date, self.entry_pickup_date)
-        self.entry_pickup_date.setFixedWidth(120)
-
-        # 更新按钮
-        self.button_update = QPushButton("更新")
-        self.button_update.clicked.connect(self.update_inventory_record)
-        # 将“更新”按钮添加到新的行
-        button_layout = QHBoxLayout()
-        button_layout.addStretch(1)
-        button_layout.addWidget(self.button_update)
-        button_layout.addStretch(1)
-        self.layout_inputs.addRow(button_layout)
-
-        self.layout_main.addLayout(self.layout_inputs)
-
-        # 明细标题和过滤选项
-        detail_layout = QHBoxLayout()
-
-        # 添加排序和过滤控件的布局
-        control_layout = QHBoxLayout()
-
-        # 添加排序选项
-        sort_label = QLabel("排序规则:")
-        self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["按更新时间", "按采购订单号", "按销售订单", "按产品编号", "按库存-箱数"])
-        self.sort_combo.currentIndexChanged.connect(self.update_inventory_tables)
-        sort_layout = QHBoxLayout()
-        sort_layout.addWidget(sort_label)
-        sort_layout.addWidget(self.sort_combo)
-        sort_layout.setSpacing(5)
-        sort_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.addLayout(sort_layout)
-
-        # 添加过滤选项
-        filter_field_label = QLabel("过滤条件:")
-        self.filter_field_combo = QComboBox()
-        self.filter_field_combo.addItems(["按产品编号", "按采购订单", "按Order Type", "按SKU CLS", "按产品名称"])
-        self.filter_field_combo.currentIndexChanged.connect(self.update_inventory_tables)
-        self.filter_field_input = QLineEdit()
-        self.filter_field_input.setPlaceholderText("输入过滤内容")
-        self.filter_field_input.textChanged.connect(self.update_inventory_tables)
-        self.filter_field_input.setFixedWidth(150)
-        filter_layout = QHBoxLayout()
-        filter_layout.addWidget(filter_field_label)
-        filter_layout.addWidget(self.filter_field_combo)
-        filter_layout.addWidget(self.filter_field_input)
-        filter_layout.setSpacing(5)
-        filter_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.addLayout(filter_layout)
-
-        # 添加弹性空间，将控件靠左对齐
-        control_layout.addStretch(1)
-
-        # 添加“库存明细”标签并使其居中
-        title_layout = QHBoxLayout()
-        title_layout.addStretch(1)
-        detail_label = QLabel("库存明细")
-        detail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_layout.addWidget(detail_label)
-        title_layout.addStretch(1)
-
-        # 将控件布局和标题布局添加到 detail_layout
-        detail_layout.addLayout(control_layout)
-        detail_layout.addLayout(title_layout)
-
-        self.layout_main.addLayout(detail_layout)
-
-        # 明细库存列表
-        self.detail_inventory_table = QTableWidget()
-        self.detail_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.detail_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.detail_inventory_table.setColumnCount(13)
-        self.detail_inventory_table.setHorizontalHeaderLabels([
-            'Order Type', '采购订单', '销售订单', '产品编号', 'SKU CLS', '产品名称',
-            '库存-箱数', '总瓶数', '库存天数', '到货日期', '提货日期', '售空日期', '创建日期'
-        ])
-        self.detail_inventory_table.verticalHeader().setVisible(False)
-        # 修改列宽调整模式
-        header = self.detail_inventory_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        # 平均分配列宽
-        for i in range(self.detail_inventory_table.columnCount()):
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
-
-        self.layout_main.addWidget(self.detail_inventory_table)
-
-        # 总览标题
-        total_label = QLabel("库存总览")
-        total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.layout_main.addWidget(total_label)
-
-        # 总览库存列表
-        self.total_inventory_table = QTableWidget()
-        self.total_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.total_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.total_inventory_table.setColumnCount(7)
-        self.total_inventory_table.setHorizontalHeaderLabels(['产品编号', '采购订单', '销售订单', 'SKU CLS', '产品名称', '库存-箱数','库存-总瓶数'])
-        self.total_inventory_table.verticalHeader().setVisible(False)
-        # 修改列宽调整模式
-        total_header = self.total_inventory_table.horizontalHeader()
-        total_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        # 平均分配列宽
-        for i in range(self.total_inventory_table.columnCount()):
-            total_header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
-
-        self.layout_main.addWidget(self.total_inventory_table)
-
-        self.setLayout(self.layout_main)
-
-        # 初始化变量
-        self.selected_inventory_item = None
-
-        # 连接选择信号到处理函数
-        self.detail_inventory_table.selectionModel().selectionChanged.connect(self.on_order_selected)
-        # 连接数据变化信号到更新方法
-        data_manager.inventory_changed.connect(self.on_inventory_changed)
-        # 加载库存数据
-        load_inventory_from_db()
-        self.update_inventory_tables()
-
-    def on_inventory_changed(self):
-        self.update_inventory_tables()
-
-    def on_order_selected(self, selected, deselected):
-        indexes = self.detail_inventory_table.selectionModel().selectedRows()
-        if indexes:
-            index = indexes[0]
-            row = index.row()
-            # 获取选中的库存记录
-            product_id = self.detail_inventory_table.item(row, 3).text()
-            order_nb = self.detail_inventory_table.item(row, 1).text()
-            # 查找对应的库存项
-            inventory_item = next((item for item in inventory if item['Product_ID'] == product_id and item['Order_Nb'] == order_nb), None)
-            if inventory_item:
-                self.selected_inventory_item = inventory_item
-                # 填充输入框
-                self.entry_arrival_date.setText(inventory_item.get('Arrival_Date', ''))
-                self.entry_pickup_date.setText(inventory_item.get('Pick_up_Date', ''))
-            else:
-                self.selected_inventory_item = None
-                self.entry_arrival_date.clear()
-                self.entry_pickup_date.clear()
-        else:
-            self.selected_inventory_item = None
-            self.entry_arrival_date.clear()
-            self.entry_pickup_date.clear()
-
-    def update_inventory_record(self):
-        if not self.selected_inventory_item:
-            QMessageBox.warning(self, "更新错误", "请先选择要更新的库存记录！")
-            return
-        # 获取输入的日期
-        arrival_date_str = self.entry_arrival_date.text().strip()
-        pickup_date_str = self.entry_pickup_date.text().strip()
-        # 创建一个标志，检查是否有更新
-        has_update = False
-        # 验证并更新到货日期
-        if arrival_date_str:
-            try:
-                arrival_date = datetime.datetime.strptime(arrival_date_str, '%Y-%m-%d')
-                self.selected_inventory_item['Arrival_Date'] = arrival_date_str
-                has_update = True
-            except ValueError:
-                QMessageBox.warning(self, "输入错误", "到货日期格式错误，请输入正确的日期格式：YYYY-MM-DD")
-                return
-        # 验证并更新提货日期
-        if pickup_date_str:
-            try:
-                pickup_date = datetime.datetime.strptime(pickup_date_str, '%Y-%m-%d')
-                self.selected_inventory_item['Pick_up_Date'] = pickup_date_str
-                has_update = True
-            except ValueError:
-                QMessageBox.warning(self, "输入错误", "提货日期格式错误，请输入正确的日期格式：YYYY-MM-DD")
-                return
-        if has_update:
-            # 在保存之前，创建一个副本并移除不属于数据库的字段
-            inventory_item_to_save = self.selected_inventory_item.copy()
-            inventory_item_to_save.pop('Order_Type', None)  # 移除 Order_Type 字段
-            # 保存到数据库
-            save_inventory_to_db(inventory_item_to_save)
-            QMessageBox.information(self, "成功", "库存记录已更新。")
-            # 更新表格
-            self.update_inventory_tables()
-        else:
-            QMessageBox.warning(self, "更新错误", "没有可更新的日期，请输入至少一个日期。")
-
-    def update_inventory_tables(self):
-        # 获取当前选择的排序规则
-        sort_option = self.sort_combo.currentText()
-
-        # 获取额外的过滤条件
-        filter_field = self.filter_field_combo.currentText()
-        filter_value = self.filter_field_input.text().strip()
-
-        # 复制库存数据以进行过滤和排序
-        filtered_inventory = inventory.copy()
-
-        # 处理过滤条件
-        if filter_value:
-            if filter_field == "按产品编号":
-                filtered_inventory = [item for item in filtered_inventory if filter_value.lower() in item.get('Product_ID', '').lower()]
-            elif filter_field == "按采购订单":
-                filtered_inventory = [item for item in filtered_inventory if filter_value.lower() in item.get('Order_Nb', '').lower()]
-            elif filter_field == "按Order Type":
-                filtered_inventory = [item for item in filtered_inventory if filter_value.lower() in item.get('Order_Type', '').lower()]
-            elif filter_field == "按SKU CLS":
-                filtered_inventory = [item for item in filtered_inventory if filter_value.lower() in item.get('SKU_CLS', '').lower()]
-            elif filter_field == "按产品名称":
-                # 将用户输入的通配符模式转换为正则表达式
-                pattern = re.escape(filter_value).replace(r'\*', '.*')
-                regex = re.compile(pattern, re.IGNORECASE)
-                filtered_inventory = [item for item in filtered_inventory if regex.search(item.get('Product_Name', ''))]
-
-        # 根据排序规则对数据排序
-        if sort_option == "按更新时间":
-            sorted_inventory = sorted(filtered_inventory, key=lambda x: x.get('Last_Update', ''), reverse=True)
-        elif sort_option == "按采购订单号":
-            sorted_inventory = sorted(filtered_inventory, key=lambda x: x.get('Order_Nb', ''))
-        elif sort_option == "按销售订单":
-            sorted_inventory = sorted(filtered_inventory, key=lambda x: x.get('Sales_Orders', ''))
-        elif sort_option == "按产品编号":
-            sorted_inventory = sorted(filtered_inventory, key=lambda x: x.get('Product_ID', ''))
-        elif sort_option == "按库存-箱数":
-            sorted_inventory = sorted(filtered_inventory, key=lambda x: int(x.get('Current_Stock_CS', 0)), reverse=True)
-        else:
-            sorted_inventory = filtered_inventory
-
-        # 建立订单号到销售订单的映射
-        order_nb_to_sales_orders = {}
-        for item in sorted_inventory:
-            order_nb = item['Order_Nb']
-            sales_order = item.get('Sales_Orders', '')
-            if order_nb not in order_nb_to_sales_orders:
-                order_nb_to_sales_orders[order_nb] = set()
-            if sales_order:
-                order_nb_to_sales_orders[order_nb].update(
-                    [s.strip() for s in sales_order.split(',')]
-                )
-
-        # 更新明细表
-        self.detail_inventory_table.setRowCount(0)
-        self.detail_inventory_table.setRowCount(len(sorted_inventory))
-        for row, product in enumerate(sorted_inventory):
-            self.detail_inventory_table.setItem(row, 0, QTableWidgetItem(product.get('Order_Type', '')))
-            self.detail_inventory_table.setItem(row, 1, QTableWidgetItem(product['Order_Nb']))
-            self.detail_inventory_table.setItem(row, 3, QTableWidgetItem(product['Product_ID']))
-            self.detail_inventory_table.setItem(row, 4, QTableWidgetItem(product.get('SKU_CLS', '')))
-            self.detail_inventory_table.setItem(row, 5, QTableWidgetItem(product['Product_Name']))
-            self.detail_inventory_table.setItem(row, 6, QTableWidgetItem(str(product['Current_Stock_CS'])))
-            # 计算总瓶数
-            btl_per_cs = int(product.get('BTL PER CS', 0))
-            total_btl = int(product['Current_Stock_CS']) * btl_per_cs
-            self.detail_inventory_table.setItem(row, 7, QTableWidgetItem(str(total_btl)))
-            # 计算库存天数
-            arrival_date_str = product.get('Arrival_Date', '')
-            pickup_date_str = product.get('Pick_up_Date', '')
-            if arrival_date_str:
-                arrival_date = parse(arrival_date_str)
-                if pickup_date_str:
-                    pickup_date = parse(pickup_date_str)
-                    delta_days = (pickup_date - arrival_date).days
-                else:
-                    delta_days = (datetime.datetime.now() - arrival_date).days
-
-                self.detail_inventory_table.setItem(row, 8, QTableWidgetItem(str(delta_days)))
-            else:
-                self.detail_inventory_table.setItem(row, 8, QTableWidgetItem("N/A"))
-
-            self.detail_inventory_table.setItem(row, 9, QTableWidgetItem(product.get('Arrival_Date', '')))
-            self.detail_inventory_table.setItem(row, 12, QTableWidgetItem(product.get('Creation_Date', '')))
-            self.detail_inventory_table.setItem(row, 10, QTableWidgetItem(product.get('Pick_up_Date', '')))
-            self.detail_inventory_table.setItem(row, 11, QTableWidgetItem(product.get('Sale_Date', '')))
-
-            # 获取对应订单号的销售订单
-            sales_orders = order_nb_to_sales_orders.get(product['Order_Nb'], set())
-            sales_order_str = ', '.join(sorted(sales_orders))
-            self.detail_inventory_table.setItem(row, 2, QTableWidgetItem(sales_order_str))
-
-        # 更新总览表，应用相同的排序和过滤规则
-        total_inventory = {}
-        for product in sorted_inventory:
-            product_id = product['Product_ID']
-            order_nb = product.get('Order_Nb', '')
-            sales_order = product.get('Sales_Orders', '')
-            sku_cls = product.get('SKU_CLS', '')
-            product_name = product['Product_Name']
-            current_stock_cs = int(product['Current_Stock_CS'])
-            btl_per_cs = int(product.get('BTL PER CS', 0))
-            current_stock_btl = current_stock_cs * btl_per_cs
-            if product_id not in total_inventory:
-                total_inventory[product_id] = {
-                    'Product_ID': product_id,
-                    'Order_Nb_Set': set([order_nb]),
-                    'Sales_Order_Set': set(),
-                    'SKU_CLS': sku_cls,
-                    'Product_Name': product_name,
-                    'Current_Stock_CS': current_stock_cs,
-                    'Current_Stock_BTL': current_stock_btl
-                }
-            else:
-                total_inventory[product_id]['Order_Nb_Set'].add(order_nb)
-                total_inventory[product_id]['Current_Stock_CS'] += current_stock_cs
-                total_inventory[product_id]['Current_Stock_BTL'] += current_stock_btl
-
-            # 收集销售订单
-            if sales_order:
-                total_inventory[product_id]['Sales_Order_Set'].update(
-                    [s.strip() for s in sales_order.split(',')]
-                )
-
-        # 将聚合后的数据转换为列表
-        total_inventory_list = list(total_inventory.values())
-
-        # 根据排序规则对总览表数据排序
-        if sort_option == "按更新时间":
-            # 总览表没有直接的更新时间字段，这里暂时不排序
-            pass
-        elif sort_option == "按采购订单号":
-            total_inventory_list = sorted(total_inventory_list, key=lambda x: ','.join(sorted(x['Order_Nb_Set'])))
-        elif sort_option == "按销售订单":
-            total_inventory_list = sorted(total_inventory_list, key=lambda x: ','.join(sorted(x['Sales_Order_Set'])))
-        elif sort_option == "按产品编号":
-            total_inventory_list = sorted(total_inventory_list, key=lambda x: x.get('Product_ID', ''))
-        elif sort_option == "按库存-箱数":
-            total_inventory_list = sorted(total_inventory_list, key=lambda x: x.get('Current_Stock_CS', 0), reverse=True)
-
-        # 更新总览表
-        self.total_inventory_table.setRowCount(0)
-        self.total_inventory_table.setRowCount(len(total_inventory_list))
-        for row, product in enumerate(total_inventory_list):
-            self.total_inventory_table.setItem(row, 0, QTableWidgetItem(product['Product_ID']))
-            order_nb_str = ', '.join(sorted(product['Order_Nb_Set']))
-            self.total_inventory_table.setItem(row, 1, QTableWidgetItem(order_nb_str))
-            self.total_inventory_table.setItem(row, 3, QTableWidgetItem(product.get('SKU_CLS', '')))
-            self.total_inventory_table.setItem(row, 4, QTableWidgetItem(product['Product_Name']))
-            self.total_inventory_table.setItem(row, 5, QTableWidgetItem(str(product['Current_Stock_CS'])))
-            self.total_inventory_table.setItem(row, 6, QTableWidgetItem(str(product['Current_Stock_BTL'])))
-
-            # 展示销售订单
-            sales_order_str = ', '.join(sorted(product['Sales_Order_Set']))
-            self.total_inventory_table.setItem(row, 2, QTableWidgetItem(sales_order_str))
 # data.py
 import sqlite3
 import datetime
@@ -950,235 +567,536 @@ def check_and_add_new_product(order):
                 inconsistencies.append(field)
         if inconsistencies:
             QMessageBox.warning(None, "产品信息不一致", f"产品 {sku_cls} 的以下信息与产品列表不一致：{', '.join(inconsistencies)}。请检查。")
-            # product_management.py
+            # inventory_management.py
+
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox
+    QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QLabel,
+    QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QComboBox,
+    QHeaderView, QMessageBox
 )
 from PyQt6.QtCore import Qt
-
-from data import (
-    products, save_product_to_db, delete_product_from_db,
-    load_products_from_db, data_manager, get_product_by_sku
-)
+from data import inventory, load_inventory_from_db, data_manager, save_inventory_to_db, purchase_orders, get_purchase_order_by_nb
 import datetime
 import re
+from dateutil.parser import parse
 
-class ProductManagementWindow(QWidget):
+class InventoryManagementWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("产品管理")
-        self.setGeometry(200, 200, 800, 600)
+        self.setWindowTitle("库存管理")
+        self.setGeometry(300, 300, 1000, 600)
 
         self.layout_main = QVBoxLayout()
 
         # 输入区域
-        self.layout_inputs = QGridLayout()
+        self.layout_inputs = QFormLayout()
         self.entries = {}
 
-        fields = [
-            ('SKU CLS', 'SKU_CLS'),
-            ('ITEM Name', 'ITEM_Name'),
-            ('Category', 'Category'),
-            ('Size', 'Size'),
-            ('ALC.', 'ALC'),
-            ('BTL PER CS', 'BTL_PER_CS'),
-            ('Supplier', 'Supplier'),
-        ]
+        # 调整间距
+        self.layout_inputs.setSpacing(5)
+        self.layout_inputs.setContentsMargins(0, 0, 0, 0)
 
-        for row, (label_text, field_name) in enumerate(fields):
-            label = QLabel(label_text + ":")
-            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            entry = QLineEdit()
-            entry.setFixedWidth(300)
-            entry.setStyleSheet("border: 1px solid lightgray;")
-            self.entries[field_name] = entry
-            self.layout_inputs.addWidget(label, row, 0)
-            self.layout_inputs.addWidget(entry, row, 1)
+        # 修改后的“到货日期”输入项
+        label_arrival_date = QLabel("到货日期:")
+        self.entry_arrival_date = QLineEdit()
+        self.entry_arrival_date.setPlaceholderText("YYYY-MM-DD")
+        self.entries['Arrival_Date'] = self.entry_arrival_date
+        self.layout_inputs.addRow(label_arrival_date, self.entry_arrival_date)
+        self.entry_arrival_date.setFixedWidth(120)
+
+        # 新增的“提货日期”输入项
+        label_pickup_date = QLabel("提货日期:")
+        self.entry_pickup_date = QLineEdit()
+        self.entry_pickup_date.setPlaceholderText("YYYY-MM-DD")
+        self.entries['Pick_up_Date'] = self.entry_pickup_date
+        self.layout_inputs.addRow(label_pickup_date, self.entry_pickup_date)
+        self.entry_pickup_date.setFixedWidth(120)
+
+        # 更新按钮
+        self.button_update = QPushButton("更新")
+        self.button_update.clicked.connect(self.update_inventory_record)
+        # 将“更新”按钮添加到新的行
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(1)
+        button_layout.addWidget(self.button_update)
+        button_layout.addStretch(1)
+        self.layout_inputs.addRow(button_layout)
 
         self.layout_main.addLayout(self.layout_inputs)
 
-        # 按钮区域
-        layout_buttons = QHBoxLayout()
+        # 明细标题和过滤选项
+        detail_layout = QHBoxLayout()
 
-        self.button_add = QPushButton("添加产品")
-        self.button_add.clicked.connect(self.add_product)
-        self.button_update = QPushButton("更新产品")
-        self.button_update.clicked.connect(self.update_product)
-        self.button_delete = QPushButton("删除产品")
-        self.button_delete.clicked.connect(self.delete_product)
+        # 添加排序和过滤控件的布局
+        control_layout = QHBoxLayout()
 
-        layout_buttons.addWidget(self.button_add)
-        layout_buttons.addWidget(self.button_update)
-        layout_buttons.addWidget(self.button_delete)
+        # 添加排序选项
+        sort_label = QLabel("排序规则:")
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["按更新时间", "按采购订单号", "按销售订单", "按产品编号", "按库存-箱数"])
+        self.sort_combo.currentIndexChanged.connect(self.update_inventory_tables)
+        sort_layout = QHBoxLayout()
+        sort_layout.addWidget(sort_label)
+        sort_layout.addWidget(self.sort_combo)
+        sort_layout.setSpacing(5)
+        sort_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.addLayout(sort_layout)
 
-        self.layout_main.addLayout(layout_buttons)
+        # 添加过滤选项
+        filter_field_label = QLabel("过滤条件:")
+        self.filter_field_combo = QComboBox()
+        self.filter_field_combo.addItems(["按产品编号", "按采购订单", "按Order Type", "按SKU CLS", "按产品名称"])
+        self.filter_field_combo.currentIndexChanged.connect(self.update_inventory_tables)
+        self.filter_field_input = QLineEdit()
+        self.filter_field_input.setPlaceholderText("输入过滤内容")
+        self.filter_field_input.textChanged.connect(self.update_inventory_tables)
+        self.filter_field_input.setFixedWidth(150)
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(filter_field_label)
+        filter_layout.addWidget(self.filter_field_combo)
+        filter_layout.addWidget(self.filter_field_input)
+        filter_layout.setSpacing(5)
+        filter_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.addLayout(filter_layout)
 
-        # 产品列表显示区域
-        self.product_table = QTableWidget()
-        self.product_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.product_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-        self.product_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.product_table.setColumnCount(8)
-        self.product_table.setHorizontalHeaderLabels([
-            'SKU CLS', 'ITEM Name', 'Category', 'Size', 'ALC.', 'BTL PER CS', 'Supplier', '创建日期'
+        # 添加弹性空间，将控件靠左对齐
+        control_layout.addStretch(1)
+
+        # 添加“库存明细”标签并使其居中
+        title_layout = QHBoxLayout()
+        title_layout.addStretch(1)
+        detail_label = QLabel("库存明细")
+        detail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_layout.addWidget(detail_label)
+        title_layout.addStretch(1)
+
+        # 将控件布局和标题布局添加到 detail_layout
+        detail_layout.addLayout(control_layout)
+        detail_layout.addLayout(title_layout)
+
+        self.layout_main.addLayout(detail_layout)
+
+        # 明细库存列表
+        self.detail_inventory_table = QTableWidget()
+        self.detail_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.detail_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.detail_inventory_table.setColumnCount(14)
+        self.detail_inventory_table.setHorizontalHeaderLabels([
+            'Order Type', '采购订单', '销售订单', '产品编号', 'SKU CLS', '产品名称',
+            '库存-箱数', '总瓶数', '采购总数', '库存天数', '到货日期', '提货日期', '售空日期', '创建日期'
         ])
-        self.product_table.verticalHeader().setVisible(False)
-        self.product_table.horizontalHeader().setStretchLastSection(True)
-        self.product_table.setWordWrap(True)
-        self.product_table.resizeColumnsToContents()
+        self.detail_inventory_table.verticalHeader().setVisible(False)
+        # 修改列宽调整模式
+        header = self.detail_inventory_table.horizontalHeader()
+        for i in range(self.detail_inventory_table.columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
-        # 连接产品表格的选择信号到处理函数
-        self.product_table.selectionModel().selectionChanged.connect(self.on_product_selected)
+        self.layout_main.addWidget(self.detail_inventory_table)
 
-        self.layout_main.addWidget(self.product_table)
+        # 总览标题
+        total_label = QLabel("库存总览")
+        total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout_main.addWidget(total_label)
+
+        # 总览库存列表
+        self.total_inventory_table = QTableWidget()
+        self.total_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.total_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.total_inventory_table.setColumnCount(8)
+        self.total_inventory_table.setHorizontalHeaderLabels(['产品编号', '采购订单', '销售订单', 'SKU CLS', '产品名称', '库存-箱数','库存-总瓶数', '采购-总瓶数'])
+        self.total_inventory_table.verticalHeader().setVisible(False)
+        # 列可拖拽大小
+        total_header = self.total_inventory_table.horizontalHeader()
+        for i in range(self.total_inventory_table.columnCount()):
+            total_header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+
+        self.layout_main.addWidget(self.total_inventory_table)
 
         self.setLayout(self.layout_main)
 
-        # 加载产品数据
-        load_products_from_db()
-        self.update_product_table()
+        # 初始化变量
+        self.selected_inventory_item = None
 
+        # 连接选择信号到处理函数
+        self.detail_inventory_table.selectionModel().selectionChanged.connect(self.on_order_selected)
         # 连接数据变化信号到更新方法
-        data_manager.products_changed.connect(self.update_product_table)
+        data_manager.inventory_changed.connect(self.on_inventory_changed)
+        # 加载库存数据
+        load_inventory_from_db()
+        self.update_inventory_tables()
 
-    def on_product_selected(self, selected, deselected):
-        try:
-            indexes = self.product_table.selectionModel().selectedRows()
-            if indexes:
-                index = indexes[0]
-                row = index.row()
-                product = products[row]
-                for field_name, entry in self.entries.items():
-                    value = product.get(field_name, "")
-                    entry.setText(str(value))
+    def on_inventory_changed(self):
+        self.update_inventory_tables()
+
+    def on_order_selected(self, selected, deselected):
+        indexes = self.detail_inventory_table.selectionModel().selectedRows()
+        if indexes:
+            index = indexes[0]
+            row = index.row()
+            # 获取选中的库存记录
+            product_id = self.detail_inventory_table.item(row, 3).text()
+            order_nb = self.detail_inventory_table.item(row, 1).text()
+            # 查找对应的库存项
+            inventory_item = next((item for item in inventory if item['Product_ID'] == product_id and item['Order_Nb'] == order_nb), None)
+            if inventory_item:
+                self.selected_inventory_item = inventory_item
+                # 填充输入框
+                self.entry_arrival_date.setText(inventory_item.get('Arrival_Date', ''))
+                self.entry_pickup_date.setText(inventory_item.get('Pick_up_Date', ''))
             else:
-                for entry in self.entries.values():
-                    entry.clear()
-        except Exception as e:
-            print(f"处理产品选择时发生错误：{e}")
-            QMessageBox.critical(self, "错误", f"处理产品选择时发生错误：{e}")
+                self.selected_inventory_item = None
+                self.entry_arrival_date.clear()
+                self.entry_pickup_date.clear()
+        else:
+            self.selected_inventory_item = None
+            self.entry_arrival_date.clear()
+            self.entry_pickup_date.clear()
 
-    def add_product(self):
-        try:
-            new_product = {}
-            for field_name, entry in self.entries.items():
-                value = entry.text().strip()
-                if not value:
-                    QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
-                    return
-                new_product[field_name] = value
-
-            # 检查 SKU_CLS 是否已存在
-            sku_cls = new_product['SKU_CLS']
-            if any(product['SKU_CLS'] == sku_cls for product in products):
-                QMessageBox.warning(self, "添加失败", f"产品 {sku_cls} 已存在！")
-                return
-
-            # 转换数据类型
+    def update_inventory_record(self):
+        if not self.selected_inventory_item:
+            QMessageBox.warning(self, "更新错误", "请先选择要更新的库存记录！")
+            return
+        # 获取输入的日期
+        arrival_date_str = self.entry_arrival_date.text().strip()
+        pickup_date_str = self.entry_pickup_date.text().strip()
+        # 创建一个标志，检查是否有更新
+        has_update = False
+        # 验证并更新到货日期
+        if arrival_date_str:
             try:
-                new_product['Size'] = float(new_product['Size'])
-                new_product['ALC'] = float(new_product['ALC'])
-                new_product['BTL_PER_CS'] = int(new_product['BTL_PER_CS'])
+                datetime.datetime.strptime(arrival_date_str, '%Y-%m-%d')
+                self.selected_inventory_item['Arrival_Date'] = arrival_date_str
+                has_update = True
             except ValueError:
-                QMessageBox.warning(self, "输入错误", "Size、ALC.、BTL PER CS 必须是有效的数字！")
+                QMessageBox.warning(self, "输入错误", "到货日期格式错误，请输入YYYY-MM-DD")
                 return
-
-            new_product['Creation_Date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            products.append(new_product)
-            save_product_to_db(new_product)
-            data_manager.products_changed.emit()
-
-            self.update_product_table()
-            QMessageBox.information(self, "成功", f"产品 {sku_cls} 已添加。")
-        except Exception as e:
-            print(f"添加产品时发生错误：{e}")
-            QMessageBox.critical(self, "错误", f"添加产品时发生错误：{e}")
-
-    def update_product(self):
-        try:
-            sku_cls = self.entries['SKU_CLS'].text().strip()
-            if not sku_cls:
-                QMessageBox.warning(self, "更新失败", "请输入 SKU CLS！")
-                return
-
-            # 获取现有产品数据
-            existing_product = get_product_by_sku(sku_cls)
-            if not existing_product:
-                QMessageBox.warning(self, "更新失败", f"产品 {sku_cls} 不存在！")
-                return
-
-            # 准备更新后的产品数据
-            updated_product = {}
-            for field_name, entry in self.entries.items():
-                value = entry.text().strip()
-                if not value:
-                    QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
-                    return
-                updated_product[field_name] = value
-
-            # 转换数据类型
+        if pickup_date_str:
             try:
-                updated_product['Size'] = float(updated_product['Size'])
-                updated_product['ALC'] = float(updated_product['ALC'])
-                updated_product['BTL_PER_CS'] = int(updated_product['BTL_PER_CS'])
+                datetime.datetime.strptime(pickup_date_str, '%Y-%m-%d')
+                self.selected_inventory_item['Pick_up_Date'] = pickup_date_str
+                has_update = True
             except ValueError:
-                QMessageBox.warning(self, "输入错误", "Size、ALC.、BTL PER CS 必须是有效的数字！")
+                QMessageBox.warning(self, "输入错误", "提货日期格式错误，请输入YYYY-MM-DD")
                 return
+        if has_update:
+            inventory_item_to_save = self.selected_inventory_item.copy()
+            inventory_item_to_save.pop('Order_Type', None)
+            save_inventory_to_db(inventory_item_to_save)
+            QMessageBox.information(self, "成功", "库存记录已更新。")
+            self.update_inventory_tables()
+        else:
+            QMessageBox.warning(self, "更新错误", "没有可更新的日期。")
 
-            # 保留创建日期
-            updated_product['Creation_Date'] = existing_product['Creation_Date']
+    def update_inventory_tables(self):
+        # 获取排序和过滤条件
+        sort_option = self.sort_combo.currentText()
+        filter_field = self.filter_field_combo.currentText()
+        filter_value = self.filter_field_input.text().strip()
 
-            # 更新产品列表和数据库
-            index = products.index(existing_product)
-            products[index] = updated_product
-            save_product_to_db(updated_product)
-            data_manager.products_changed.emit()
+        filtered_inventory = inventory.copy()
 
-            self.update_product_table()
-            QMessageBox.information(self, "成功", f"产品 {sku_cls} 已更新。")
-        except Exception as e:
-            print(f"更新产品时发生错误：{e}")
-            QMessageBox.critical(self, "错误", f"更新产品时发生错误：{e}")
+        # 过滤
+        if filter_value:
+            pattern = None
+            if '*' in filter_value:
+                pattern = re.escape(filter_value).replace(r'\*', '.*')
+                regex = re.compile(pattern, re.IGNORECASE)
+            def match_field(val):
+                if pattern:
+                    return bool(regex.search(str(val)))
+                else:
+                    return filter_value.lower() in str(val).lower()
 
-    def delete_product(self):
-        try:
-            sku_cls = self.entries['SKU_CLS'].text().strip()
-            if not sku_cls:
-                QMessageBox.warning(self, "删除失败", "请输入 SKU CLS！")
-                return
+            if filter_field == "按产品编号":
+                filtered_inventory = [item for item in filtered_inventory if match_field(item.get('Product_ID',''))]
+            elif filter_field == "按采购订单":
+                filtered_inventory = [item for item in filtered_inventory if match_field(item.get('Order_Nb',''))]
+            elif filter_field == "按Order Type":
+                filtered_inventory = [item for item in filtered_inventory if match_field(item.get('Order_Type',''))]
+            elif filter_field == "按SKU CLS":
+                filtered_inventory = [item for item in filtered_inventory if match_field(item.get('SKU_CLS',''))]
+            elif filter_field == "按产品名称":
+                filtered_inventory = [item for item in filtered_inventory if match_field(item.get('Product_Name',''))]
 
-            product = get_product_by_sku(sku_cls)
-            if product:
-                # 从产品列表中删除
-                products.remove(product)
-                # 从数据库中删除
-                delete_product_from_db(sku_cls)
-                data_manager.products_changed.emit()
+        # 排序
+        def sort_key(x):
+            if sort_option == "按更新时间":
+                return x.get('Last_Update','')
+            elif sort_option == "按采购订单号":
+                return x.get('Order_Nb','')
+            elif sort_option == "按销售订单":
+                return x.get('Sales_Orders','')
+            elif sort_option == "按产品编号":
+                return x.get('Product_ID','')
+            elif sort_option == "按库存-箱数":
+                return int(x.get('Current_Stock_CS',0))
+            return ''
 
-                self.update_product_table()
-                QMessageBox.information(self, "成功", f"产品 {sku_cls} 已删除。")
+        reverse = True if sort_option in ["按更新时间","按库存-箱数"] else False
+        # 更新时间和库存-箱数按照需要可选是否逆序，这里保持和之前逻辑一致（更新时间原本就是reverse=True）
+        if sort_option == "按更新时间":
+            # 原代码是reverse = True
+            sorted_inventory = sorted(filtered_inventory, key=sort_key, reverse=True)
+        elif sort_option == "按库存-箱数":
+            # 原来是reverse=True
+            sorted_inventory = sorted(filtered_inventory, key=sort_key, reverse=True)
+        else:
+            sorted_inventory = sorted(filtered_inventory, key=sort_key, reverse=False)
+
+        # 更新明细表
+        self.detail_inventory_table.setRowCount(0)
+        self.detail_inventory_table.setRowCount(len(sorted_inventory))
+
+        # 建立订单号到销售订单映射
+        order_nb_to_sales_orders = {}
+        for item in sorted_inventory:
+            order_nb = item['Order_Nb']
+            sales_order = item.get('Sales_Orders', '')
+            if order_nb not in order_nb_to_sales_orders:
+                order_nb_to_sales_orders[order_nb] = set()
+            if sales_order:
+                order_nb_to_sales_orders[order_nb].update([s.strip() for s in sales_order.split(',')])
+
+        for row, product in enumerate(sorted_inventory):
+            self.detail_inventory_table.setItem(row, 0, QTableWidgetItem(product.get('Order_Type', '')))
+            self.detail_inventory_table.setItem(row, 1, QTableWidgetItem(product['Order_Nb']))
+            sales_orders = order_nb_to_sales_orders.get(product['Order_Nb'], set())
+            sales_order_str = ', '.join(sorted(sales_orders))
+            self.detail_inventory_table.setItem(row, 2, QTableWidgetItem(sales_order_str))
+            self.detail_inventory_table.setItem(row, 3, QTableWidgetItem(product['Product_ID']))
+            self.detail_inventory_table.setItem(row, 4, QTableWidgetItem(product.get('SKU_CLS', '')))
+            self.detail_inventory_table.setItem(row, 5, QTableWidgetItem(product['Product_Name']))
+            self.detail_inventory_table.setItem(row, 6, QTableWidgetItem(str(product['Current_Stock_CS'])))
+            btl_per_cs = int(product.get('BTL PER CS', 0))
+            total_btl = int(product['Current_Stock_CS']) * btl_per_cs
+            self.detail_inventory_table.setItem(row, 7, QTableWidgetItem(str(total_btl)))
+
+            # 采购总数：对应采购订单的 QUANTITY CS * BTL PER CS
+            purchase_order = get_purchase_order_by_nb(product['Order_Nb'])
+            if purchase_order:
+                po_qty_cs = int(purchase_order.get('QUANTITY CS', 0))
+                po_btl_per_cs = int(purchase_order.get('BTL PER CS', 0))
+                purchase_total_btl = po_qty_cs * po_btl_per_cs
             else:
-                QMessageBox.information(self, "删除失败", f"未找到 SKU CLS 为 {sku_cls} 的产品。")
-        except Exception as e:
-            print(f"删除产品时发生错误：{e}")
-            QMessageBox.critical(self, "错误", f"删除产品时发生错误：{e}")
+                purchase_total_btl = 0
+            self.detail_inventory_table.setItem(row, 8, QTableWidgetItem(str(purchase_total_btl)))
 
-    def update_product_table(self):
-        # 更新产品表格显示
-        self.product_table.setRowCount(0)
-        self.product_table.setRowCount(len(products))
-        for row, product in enumerate(products):
-            self.product_table.setItem(row, 0, QTableWidgetItem(product.get('SKU_CLS', '')))
-            self.product_table.setItem(row, 1, QTableWidgetItem(product.get('ITEM_Name', '')))
-            self.product_table.setItem(row, 2, QTableWidgetItem(product.get('Category', '')))
-            self.product_table.setItem(row, 3, QTableWidgetItem(str(product.get('Size', ''))))
-            self.product_table.setItem(row, 4, QTableWidgetItem(str(product.get('ALC', ''))))
-            self.product_table.setItem(row, 5, QTableWidgetItem(str(product.get('BTL_PER_CS', ''))))
-            self.product_table.setItem(row, 6, QTableWidgetItem(product.get('Supplier', '')))
-            self.product_table.setItem(row, 7, QTableWidgetItem(product.get('Creation_Date', '')))
+            arrival_date_str = product.get('Arrival_Date', '')
+            pickup_date_str = product.get('Pick_up_Date', '')
+            if arrival_date_str:
+                arrival_date = parse(arrival_date_str)
+                if pickup_date_str:
+                    pickup_date = parse(pickup_date_str)
+                    delta_days = (pickup_date - arrival_date).days
+                else:
+                    delta_days = (datetime.datetime.now() - arrival_date).days
+                self.detail_inventory_table.setItem(row, 9, QTableWidgetItem(str(delta_days)))
+            else:
+                self.detail_inventory_table.setItem(row, 9, QTableWidgetItem("N/A"))
+
+            self.detail_inventory_table.setItem(row, 10, QTableWidgetItem(product.get('Arrival_Date', '')))
+            self.detail_inventory_table.setItem(row, 11, QTableWidgetItem(product.get('Pick_up_Date', '')))
+            self.detail_inventory_table.setItem(row, 12, QTableWidgetItem(product.get('Sale_Date', '')))
+            self.detail_inventory_table.setItem(row, 13, QTableWidgetItem(product.get('Creation_Date', '')))
+
+        # 更新总览表
+        total_inventory = {}
+        for product in sorted_inventory:
+            product_id = product['Product_ID']
+            order_nb = product.get('Order_Nb', '')
+            sales_order = product.get('Sales_Orders', '')
+            sku_cls = product.get('SKU_CLS', '')
+            product_name = product['Product_Name']
+            current_stock_cs = int(product['Current_Stock_CS'])
+            btl_per_cs = int(product.get('BTL PER CS', 0))
+            current_stock_btl = current_stock_cs * btl_per_cs
+
+            if product_id not in total_inventory:
+                total_inventory[product_id] = {
+                    'Product_ID': product_id,
+                    'Order_Nb_Set': set([order_nb]),
+                    'Sales_Order_Set': set(),
+                    'SKU_CLS': sku_cls,
+                    'Product_Name': product_name,
+                    'Current_Stock_CS': current_stock_cs,
+                    'Current_Stock_BTL': current_stock_btl
+                }
+            else:
+                total_inventory[product_id]['Order_Nb_Set'].add(order_nb)
+                total_inventory[product_id]['Current_Stock_CS'] += current_stock_cs
+                total_inventory[product_id]['Current_Stock_BTL'] += current_stock_btl
+
+            if sales_order:
+                total_inventory[product_id]['Sales_Order_Set'].update([s.strip() for s in sales_order.split(',')])
+
+        total_inventory_list = list(total_inventory.values())
+
+        # 总览表排序规则同样应用
+        # 重用 sort_option 根据需要
+        def total_sort_key(x):
+            if sort_option == "按更新时间":
+                # 无直接更新时间，暂不排序
+                return ''
+            elif sort_option == "按采购订单号":
+                return ','.join(sorted(x['Order_Nb_Set']))
+            elif sort_option == "按销售订单":
+                return ','.join(sorted(x['Sales_Order_Set']))
+            elif sort_option == "按产品编号":
+                return x.get('Product_ID','')
+            elif sort_option == "按库存-箱数":
+                return x.get('Current_Stock_CS',0)
+            return ''
+
+        if sort_option in ["按库存-箱数"]:
+            total_inventory_list = sorted(total_inventory_list, key=total_sort_key, reverse=True)
+        else:
+            total_inventory_list = sorted(total_inventory_list, key=total_sort_key)
+
+        self.total_inventory_table.setRowCount(0)
+        self.total_inventory_table.setRowCount(len(total_inventory_list))
+        for row, product in enumerate(total_inventory_list):
+            self.total_inventory_table.setItem(row, 0, QTableWidgetItem(product['Product_ID']))
+            order_nb_str = ', '.join(sorted(product['Order_Nb_Set']))
+            self.total_inventory_table.setItem(row, 1, QTableWidgetItem(order_nb_str))
+            sales_order_str = ', '.join(sorted(product['Sales_Order_Set']))
+            self.total_inventory_table.setItem(row, 2, QTableWidgetItem(sales_order_str))
+            self.total_inventory_table.setItem(row, 3, QTableWidgetItem(product.get('SKU_CLS', '')))
+            self.total_inventory_table.setItem(row, 4, QTableWidgetItem(product['Product_Name']))
+            self.total_inventory_table.setItem(row, 5, QTableWidgetItem(str(product['Current_Stock_CS'])))
+            self.total_inventory_table.setItem(row, 6, QTableWidgetItem(str(product['Current_Stock_BTL'])))
+
+            # 采购-总瓶数计算
+            product_id = product['Product_ID']
+            purchase_total_btl_sum = 0
+            for po in purchase_orders:
+                if po.get('Product_ID', '') == product_id:
+                    qcs = int(po.get('QUANTITY CS', 0))
+                    bpcs = int(po.get('BTL PER CS', 0))
+                    purchase_total_btl_sum += qcs * bpcs
+            self.total_inventory_table.setItem(row, 7, QTableWidgetItem(str(purchase_total_btl_sum)))
+# main.py
+
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
+)
+import sys
+
+from data import (
+    initialize_database,
+    load_purchase_orders_from_db,
+    load_sales_orders_from_db,
+    load_inventory_from_db,
+    load_products_from_db  # 新增
+)
+from order_details import OrderDetailsWindow
+from inventory_management import InventoryManagementWindow
+from sales_order import SalesOrderWindow
+from product_management import ProductManagementWindow  # 新增
+
+# 创建主窗口
+app = QApplication(sys.argv)
+window = QWidget()
+window.setWindowTitle("订单管理系统")
+window.setGeometry(100, 100, 800, 600)
+
+# 程序启动时加载数据
+initialize_database()
+load_purchase_orders_from_db()
+load_sales_orders_from_db()
+load_inventory_from_db()
+load_products_from_db()  # 新增
+
+# 布局设置
+layout_main = QVBoxLayout()
+
+# 按钮区域
+layout_buttons = QHBoxLayout()
+
+button_order_details = QPushButton("采购订单管理")
+button_order_details.clicked.connect(lambda: open_order_details_window())
+
+button_sales_order = QPushButton("销售订单管理")
+button_sales_order.clicked.connect(lambda: open_sales_order_window())
+
+button_inventory_management = QPushButton("库存管理")
+button_inventory_management.clicked.connect(lambda: open_inventory_management_window())
+
+button_product_management = QPushButton("产品管理")  # 新增
+button_product_management.clicked.connect(lambda: open_product_management_window())  # 新增
+
+layout_buttons.addWidget(button_order_details)
+layout_buttons.addWidget(button_sales_order)
+layout_buttons.addWidget(button_inventory_management)
+layout_buttons.addWidget(button_product_management)  # 新增
+
+layout_main.addLayout(layout_buttons)
+
+# 定义窗口实例
+order_details_window = None
+sales_order_window = None
+inventory_management_window = None
+product_management_window = None  # 新增
+
+# 打开采购订单窗口
+def open_order_details_window():
+    global order_details_window
+    try:
+        if order_details_window is None:
+            order_details_window = OrderDetailsWindow()
+        else:
+            order_details_window.update_order_table()
+        order_details_window.show()
+    except Exception as e:
+        print(f"打开采购订单窗口时发生错误：{e}")
+        QMessageBox.critical(None, "错误", f"打开采购订单窗口时发生错误：{e}")
+
+# 打开销售订单窗口
+def open_sales_order_window():
+    global sales_order_window
+    try:
+        if sales_order_window is None:
+            sales_order_window = SalesOrderWindow()
+        else:
+            sales_order_window.update_sales_order_table()
+        sales_order_window.show()
+    except Exception as e:
+        print(f"打开销售订单窗口时发生错误：{e}")
+        QMessageBox.critical(None, "错误", f"打开销售订单窗口时发生错误：{e}")
+
+# 打开库存管理窗口
+def open_inventory_management_window():
+    global inventory_management_window
+    try:
+        if inventory_management_window is None:
+            inventory_management_window = InventoryManagementWindow()
+        else:
+            inventory_management_window.update_inventory_tables()
+        inventory_management_window.show()
+    except Exception as e:
+        print(f"打开库存管理窗口时发生错误：{e}")
+        QMessageBox.critical(None, "错误", f"打开库存管理窗口时发生错误：{e}")
+
+# 打开产品管理窗口
+def open_product_management_window():
+    global product_management_window
+    try:
+        if product_management_window is None:
+            product_management_window = ProductManagementWindow()
+        else:
+            product_management_window.update_product_table()
+        product_management_window.show()
+    except Exception as e:
+        print(f"打开产品管理窗口时发生错误：{e}")
+        QMessageBox.critical(None, "错误", f"打开产品管理窗口时发生错误：{e}")
+
+# 设置主布局
+window.setLayout(layout_main)
+window.show()
+
+if __name__ == "__main__":
+    sys.exit(app.exec())
 # order_details.py
+
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -1228,7 +1146,7 @@ class OrderDetailsWindow(QWidget):
             ("UCC13", "UCC13"),
         ]
 
-        # 右侧字段
+        
         right_fields = [
             ("Supplier", "Supplier"),
             ("BCMB", "BCMB"),
@@ -1271,9 +1189,6 @@ class OrderDetailsWindow(QWidget):
             elif field_name == "International Freight Exchange Rate":
                 entry = QLineEdit()
                 entry.setText("0")
-            elif field_name == "Arrival_Date":
-                entry = QLineEdit()
-                entry.setPlaceholderText("YYYY-MM-DD")
             else:
                 entry = QLineEdit()
             entry.setFixedWidth(500)
@@ -1282,16 +1197,15 @@ class OrderDetailsWindow(QWidget):
             self.layout_inputs.addWidget(label, row, 0)
             self.layout_inputs.addWidget(entry, row, 1)
 
-        # 右侧字段
         for row, (label_text, field_name) in enumerate(right_fields):
             label = QLabel(label_text + ":")
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if field_name == "Supplier": 
-                entry = QComboBox() 
-                entry.addItems(["Filips", "CVBG", "DULONG", "BONCHATEAU"]) 
-            elif field_name == "CATEGORY": 
-                entry = QComboBox() 
-                entry.addItems(["RED", "WHITE"]) 
+            if field_name == "Supplier":
+                entry = QComboBox()
+                entry.addItems(["Filips", "CVBG", "DULONG", "BONCHATEAU"])
+            elif field_name == "CATEGORY":
+                entry = QComboBox()
+                entry.addItems(["RED", "WHITE", "ROSE"])
                 entry.setCurrentText("RED")
             elif field_name == "SIZE":
                 entry = QComboBox()
@@ -1306,6 +1220,7 @@ class OrderDetailsWindow(QWidget):
             self.layout_inputs.addWidget(entry, row, 3)
 
         self.layout_main.addLayout(self.layout_inputs)
+
         # 按钮区域
         layout_buttons = QHBoxLayout()
 
@@ -1336,7 +1251,7 @@ class OrderDetailsWindow(QWidget):
         button_price_calculator = QPushButton("价格计算器")
         button_price_calculator.clicked.connect(lambda: self.open_price_calculator())
 
-        button_compare = QPushButton("比较注册信息")  # 新增按钮
+        button_compare = QPushButton("比较注册信息")
         button_compare.clicked.connect(self.compare_with_registration_file)
 
         layout_buttons.addWidget(self.button_add)
@@ -1351,6 +1266,29 @@ class OrderDetailsWindow(QWidget):
         layout_buttons.addWidget(button_compare)
 
         self.layout_main.addLayout(layout_buttons)
+
+        # 增加排序和过滤区域
+        filter_sort_layout = QHBoxLayout()
+
+        sort_label = QLabel("排序规则:")
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["按更新时间", "按订单号", "按Product_ID", "按SKU CLS", "按Supplier", "按ITEM Name", "按CATEGORY", "按INVOICE Price", "按WHOLESALE CS", "按EXW"])
+        self.sort_combo.currentIndexChanged.connect(self.update_order_table)
+        filter_sort_layout.addWidget(sort_label)
+        filter_sort_layout.addWidget(self.sort_combo)
+
+        filter_field_label = QLabel("过滤条件:")
+        self.filter_field_combo = QComboBox()
+        self.filter_field_combo.addItems(["按Product_ID", "按Supplier", "按ITEM Name", "按CATEGORY", "按Date", "按SKU CLS"])
+        filter_sort_layout.addWidget(filter_field_label)
+        filter_sort_layout.addWidget(self.filter_field_combo)
+
+        self.filter_field_input = QLineEdit()
+        self.filter_field_input.setPlaceholderText("输入过滤内容(支持*通配符)")
+        self.filter_field_input.textChanged.connect(self.update_order_table)
+        filter_sort_layout.addWidget(self.filter_field_input)
+
+        self.layout_main.addLayout(filter_sort_layout)
 
         # 订单列表显示区域
         display_fields = [field for field in db_fields]
@@ -1374,13 +1312,80 @@ class OrderDetailsWindow(QWidget):
 
         self.update_order_table()
 
+    def get_filtered_and_sorted_purchase_orders(self):
+        filtered_orders = purchase_orders.copy()
+
+        filter_field = self.filter_field_combo.currentText()
+        filter_value = self.filter_field_input.text().strip()
+
+        if filter_value:
+            pattern = None
+            if '*' in filter_value:
+                pattern = re.escape(filter_value).replace(r'\*', '.*')
+                regex = re.compile(pattern, re.IGNORECASE)
+            def match_field(val):
+                if pattern:
+                    return bool(regex.search(str(val)))
+                else:
+                    return filter_value.lower() in str(val).lower()
+
+            if filter_field == "按Product_ID":
+                filtered_orders = [o for o in filtered_orders if match_field(o.get('Product_ID',''))]
+            elif filter_field == "按Supplier":
+                filtered_orders = [o for o in filtered_orders if match_field(o.get('Supplier',''))]
+            elif filter_field == "按ITEM Name":
+                filtered_orders = [o for o in filtered_orders if match_field(o.get('ITEM Name',''))]
+            elif filter_field == "按CATEGORY":
+                filtered_orders = [o for o in filtered_orders if match_field(o.get('CATEGORY',''))]
+            elif filter_field == "按Date":
+                filtered_orders = [o for o in filtered_orders if match_field(o.get('date',''))]
+            elif filter_field == "按SKU CLS":
+                filtered_orders = [o for o in filtered_orders if match_field(o.get('SKU CLS',''))]
+
+        sort_option = self.sort_combo.currentText()
+        def sort_key(order):
+            if sort_option == "按更新时间":
+                return order.get('date', '')
+            elif sort_option == "按订单号":
+                return order.get('Order Nb','')
+            elif sort_option == "按Product_ID":
+                return order.get('Product_ID','')
+            elif sort_option == "按SKU CLS":
+                return order.get('SKU CLS','')
+            elif sort_option == "按Supplier":
+                return order.get('Supplier','')
+            elif sort_option == "按ITEM Name":
+                return order.get('ITEM Name','')
+            elif sort_option == "按CATEGORY":
+                return order.get('CATEGORY','')
+            elif sort_option == "按INVOICE Price":
+                try:
+                    return float(order.get('INVOICE PRICE',0))
+                except:
+                    return 0
+            elif sort_option == "按WHOLESALE CS":
+                try:
+                    return float(order.get('WHOLESALE CS',0))
+                except:
+                    return 0
+            elif sort_option == "按EXW":
+                try:
+                    return float(order.get('EXW EURO',0))
+                except:
+                    return 0
+            return ''
+
+        filtered_orders = sorted(filtered_orders, key=sort_key)
+        return filtered_orders
+
     def on_order_selected(self, selected, deselected):
         try:
             indexes = self.order_table.selectionModel().selectedRows()
             if indexes:
                 index = indexes[0]
                 row = index.row()
-                order = purchase_orders[row]
+                fs_orders = self.get_filtered_and_sorted_purchase_orders()
+                order = fs_orders[row]
                 for field_name, entry in self.entries.items():
                     value = order.get(field_name, "")
                     if isinstance(entry, QComboBox):
@@ -1776,18 +1781,37 @@ class OrderDetailsWindow(QWidget):
 
     def export_orders(self):
         try:
-            import pandas as pd
-            from PyQt6.QtWidgets import QFileDialog
-            # 将采购订单转换为 DataFrame
-            df = pd.DataFrame(purchase_orders)
-            if df.empty:
+            # 获取当前显示的订单(过滤+排序后的列表)
+            filtered_sorted_orders = self.get_filtered_and_sorted_purchase_orders()
+
+            if len(filtered_sorted_orders) == 0:
                 QMessageBox.information(self, "导出", "没有可导出的订单数据。")
                 return
-            # 指定导出的字段顺序
-            field_order = [field_name for label_text, field_name in db_fields]
+
+            import pandas as pd
+            df = pd.DataFrame(filtered_sorted_orders)
+
+            # 指定导出字段顺序(与原先代码保持一致)
+            field_order = [field_name for label_text, field_name in db_fields if field_name in df.columns]
             df = df[field_order]
+
+            # 删除 "PROFIT PER BT" 字段（如果存在）
+            if "PROFIT PER BT" in df.columns:
+                df.drop("PROFIT PER BT", axis=1, inplace=True, errors='ignore')
+
+            # 尝试将可转为数值的列转为数值类型
+            # 这样在输出Excel时，这些列会是数字格式（而非纯文本）
+            for col in df.columns:
+                try:
+                    # 尝试将列转为数值类型，如果失败将触发异常
+                    df[col] = pd.to_numeric(df[col])
+                except ValueError:
+                    # 转换失败表示该列并非纯数字列，保持原样即可，不进行处理
+                    pass
+
             # 弹出文件保存对话框
-            options = QFileDialog.Option.DontUseNativeDialog  # 根据需要选择选项
+            from PyQt6.QtWidgets import QFileDialog
+            options = QFileDialog.Option.DontUseNativeDialog
             file_name, _ = QFileDialog.getSaveFileName(self, "保存文件", "", "Excel Files (*.xlsx);;All Files (*)", options=options)
 
             if file_name:
@@ -1803,9 +1827,11 @@ class OrderDetailsWindow(QWidget):
     def update_order_table(self):
         # 更新订单表格显示
         display_fields = [field for field in db_fields]
+        filtered_sorted_orders = self.get_filtered_and_sorted_purchase_orders()
+
         self.order_table.setRowCount(0)
-        self.order_table.setRowCount(len(purchase_orders))
-        for row, order in enumerate(purchase_orders):
+        self.order_table.setRowCount(len(filtered_sorted_orders))
+        for row, order in enumerate(filtered_sorted_orders):
             for col, (label_text, field_name) in enumerate(display_fields):
                 value = order.get(field_name, "")
                 item = QTableWidgetItem(str(value))
@@ -1961,124 +1987,1032 @@ class OrderDetailsWindow(QWidget):
         except Exception as e:
             print(f"比较时发生错误：{e}")
             QMessageBox.critical(self, "错误", f"比较时发生错误：{e}")
-# main.py
+# sales_order.py
 
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox, QListWidget, QAbstractItemView, QListWidgetItem
 )
-import sys
+from PyQt6.QtCore import Qt
+import datetime
+from data import (
+    sales_orders, save_sales_order_to_db, delete_sales_order_from_db,
+    load_sales_orders_from_db, get_btl_per_cs, restore_inventory, data_manager, inventory, update_inventory, get_inventory_info, purchase_orders
+)
+from data import get_purchase_order_by_product_id
+import re
+
+class SalesOrderWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("销售订单管理")
+        self.setGeometry(200, 200, 1000, 600)
+
+        self.layout_main = QVBoxLayout()
+
+        self.layout_inputs = QGridLayout()
+        self.entries = {}
+
+        fields = [
+            ('销售订单号', 'Sales_ID'),
+            ('产品编号', 'Product_ID'),
+            ('订单号','Order_Nb'),
+            ('客户编号', 'Customer_ID'),
+            ('销售箱数', 'Quantity_CS_Sold'),
+            ('单瓶售价(€)', 'Price_per_bottle'),
+        ]
+
+        for row, (label_text, field_name) in enumerate(fields):
+            label = QLabel(label_text + ":")
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if field_name == 'Product_ID':
+                entry = QComboBox()
+                product_ids = self.get_all_product_ids()
+                product_ids.insert(0, '')
+                entry.addItems(product_ids)
+                entry.currentIndexChanged.connect(self.on_product_id_changed)
+            elif field_name == 'Order_Nb':
+                entry = QListWidget()
+                entry.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+                entry.setFixedHeight(100)
+                entry.itemSelectionChanged.connect(self.update_available_stock)
+            else:
+                entry = QLineEdit()
+            entry.setFixedWidth(300)
+            entry.setStyleSheet("border: 1px solid lightgray;")
+            self.entries[field_name] = entry
+            self.layout_inputs.addWidget(label, row, 0)
+            self.layout_inputs.addWidget(entry, row, 1)
+            if field_name == 'Quantity_CS_Sold':
+                self.available_cs_label = QLabel("可用箱数: 0")
+                self.available_cs_label.setStyleSheet("color: gray; font-style: italic;")
+                self.layout_inputs.addWidget(self.available_cs_label, row, 2)
+
+        label_btl_per_cs = QLabel("每箱瓶数:")
+        label_btl_per_cs.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.label_btl_per_cs_value = QLabel("0")
+        self.layout_inputs.addWidget(label_btl_per_cs, len(fields), 0)
+        self.layout_inputs.addWidget(self.label_btl_per_cs_value, len(fields), 1)
+
+        self.layout_main.addLayout(self.layout_inputs)
+
+        layout_buttons = QHBoxLayout()
+
+        self.button_add = QPushButton("添加销售订单")
+        self.button_add.clicked.connect(self.add_sales_order)
+        self.button_update = QPushButton("更新销售订单")
+        self.button_update.clicked.connect(self.update_sales_order)
+        self.button_delete = QPushButton("删除销售订单")
+        self.button_delete.clicked.connect(self.delete_sales_order)
+
+        layout_buttons.addWidget(self.button_add)
+        layout_buttons.addWidget(self.button_update)
+        layout_buttons.addWidget(self.button_delete)
+        self.layout_main.addLayout(layout_buttons)
+
+        # 增加排序和过滤区域
+        filter_sort_layout = QHBoxLayout()
+
+        sort_label = QLabel("排序规则:")
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["按订单日期", "按客户编号", "按销售订单号", "按采购订单号", "按产品编号", "按产品名称", "按总金额"])
+        self.sort_combo.currentIndexChanged.connect(self.update_sales_order_table)
+        filter_sort_layout.addWidget(sort_label)
+        filter_sort_layout.addWidget(self.sort_combo)
+
+        filter_field_label = QLabel("过滤条件:")
+        self.filter_field_combo = QComboBox()
+        self.filter_field_combo.addItems(["按订单日期", "按客户编号", "按采购订单号", "按产品编号", "按产品名称"])
+        filter_sort_layout.addWidget(filter_field_label)
+        filter_sort_layout.addWidget(self.filter_field_combo)
+
+        self.filter_field_input = QLineEdit()
+        self.filter_field_input.setPlaceholderText("输入过滤内容(支持*通配符)")
+        self.filter_field_input.textChanged.connect(self.update_sales_order_table)
+        filter_sort_layout.addWidget(self.filter_field_input)
+
+        self.layout_main.addLayout(filter_sort_layout)
+
+        self.table_fields = [
+            ('客户编号', 'Customer_ID'),
+            ('销售订单号', 'Sales_ID'),
+            ('采购订单号', 'Order_Nb'),
+            ('产品编号', 'Product_ID'),
+            ('产品名称', 'Product_Name'),
+            ('销售箱数', 'Quantity_CS_Sold'),
+            ('BTL PER CS', 'BTL_PER_CS'),
+            ('总销售瓶数', 'Total_Quantity_BTL_Sold'),
+            ('单瓶售价(€)', 'Price_per_bottle'),
+            ('总金额(€)', 'Total_Amount'),
+            ('订单日期', 'Order_Date'),
+            ('备注', 'Remarks')
+        ]
+        self.sales_order_table = QTableWidget()
+        self.sales_order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.sales_order_table.setColumnCount(len(self.table_fields))
+        self.sales_order_table.setHorizontalHeaderLabels([label_text for label_text, field_name in self.table_fields])
+        self.sales_order_table.verticalHeader().setVisible(False)
+        self.sales_order_table.horizontalHeader().setStretchLastSection(True)
+        self.sales_order_table.setWordWrap(True)
+        self.sales_order_table.resizeColumnsToContents()
+        self.sales_order_table.itemChanged.connect(self.on_item_changed)
+
+        self.sales_order_table.selectionModel().selectionChanged.connect(self.on_order_selected)
+        self.layout_main.addWidget(self.sales_order_table)
+        self.setLayout(self.layout_main)
+
+        load_sales_orders_from_db()
+        self.update_sales_order_table()
+        data_manager.inventory_changed.connect(self.on_inventory_changed)
+
+        # 初始化
+        self.on_product_id_changed()
+
+    def on_item_changed(self, item):
+        column = item.column()
+        remarks_col = self.field_index('Remarks')
+        if column == remarks_col:
+            new_remarks = item.text()
+            sales_id_item = self.sales_order_table.item(item.row(), self.field_index('Sales_ID'))
+            if sales_id_item:
+                sales_id = sales_id_item.text()
+                order = next((o for o in sales_orders if o['Sales_ID'] == sales_id), None)
+                if order:
+                    order['Remarks'] = new_remarks
+                    save_sales_order_to_db(order)
+
+    def field_index(self, field_name):
+        for index, (label, field) in enumerate(self.table_fields):
+            if field == field_name:
+                return index
+        return None
+
+    def on_inventory_changed(self):
+        self.update_product_ids()
+
+    def update_product_ids(self):
+        current_product_id = self.entries['Product_ID'].currentText()
+        product_ids = self.get_all_product_ids()
+        self.entries['Product_ID'].clear()
+        for pid in product_ids:
+            self.entries['Product_ID'].addItem(pid)
+
+        if current_product_id in product_ids:
+            idx = product_ids.index(current_product_id)
+            self.entries['Product_ID'].setCurrentIndex(idx)
+        else:
+            self.entries['Product_ID'].setCurrentIndex(0)
+        self.on_product_id_changed()
+
+    def update_order_nb_list(self, product_id):
+        self.entries['Order_Nb'].clear()
+        order_nbs = self.get_order_nbs_by_product_id(product_id)
+        for order_nb, arrival_date in order_nbs:
+            display_text = f"{order_nb}"
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.ItemDataRole.UserRole, order_nb)
+            self.entries['Order_Nb'].addItem(item)
+
+    def update_available_stock(self):
+        selected_items = self.entries['Order_Nb'].selectedItems()
+        selected_order_nbs = [item.data(Qt.ItemDataRole.UserRole) for item in selected_items]
+
+        total_available_cs = 0
+        btl_per_cs_values = []
+
+        for item in inventory:
+            if item['Order_Nb'] in selected_order_nbs:
+                current_stock_cs = int(item.get('Current_Stock_CS', 0))
+                total_available_cs += current_stock_cs
+                btl_val = int(item.get('BTL PER CS', 0))
+                if btl_val not in btl_per_cs_values:
+                    btl_per_cs_values.append(btl_val)
+
+        self.available_cs_label.setText(f"可用箱数: {total_available_cs}")
+        if btl_per_cs_values:
+            self.label_btl_per_cs_value.setText(", ".join(map(str, sorted(btl_per_cs_values))))
+        else:
+            self.label_btl_per_cs_value.setText("0")
+
+    def get_order_nbs_by_product_id(self, product_id):
+        order_list = []
+        for item_ in inventory:
+            if item_['Product_ID'] == product_id:
+                current_stock_cs = int(item_.get('Current_Stock_CS',0))
+                if current_stock_cs > 0:
+                    order_nb = item_['Order_Nb']
+                    arrival_date = item_.get('Arrival_Date','')
+                    order_list.append((order_nb, arrival_date))
+        order_list.sort(key=lambda x: x[1])
+        return order_list
+
+    def get_all_product_ids(self):
+        product_ids = set()
+        for item_ in inventory:
+            product_ids.add(item_['Product_ID'])
+        return sorted(list(product_ids))
+
+    def on_product_id_changed(self):
+        product_id = self.entries['Product_ID'].currentText()
+        btl_per_cs = get_btl_per_cs(product_id)
+        self.label_btl_per_cs_value.setText(str(btl_per_cs))
+        self.update_order_nb_list(product_id)
+        self.update_available_stock()
+
+    def on_order_selected(self, selected, deselected):
+        indexes = self.sales_order_table.selectionModel().selectedRows()
+        if indexes:
+            index = indexes[0]
+            row = index.row()
+            fs_orders = self.get_filtered_and_sorted_sales_orders()
+            order = fs_orders[row]
+            for field_name, entry in self.entries.items():
+                if field_name == 'Order_Nb':
+                    order_nbs = order.get('Order_Nb','').split(',')
+                    entry.clearSelection()
+                    for i in range(entry.count()):
+                        item = entry.item(i)
+                        if item.data(Qt.ItemDataRole.UserRole) in order_nbs:
+                            item.setSelected(True)
+                elif field_name == 'Product_ID':
+                    idx = entry.findText(order.get('Product_ID',''))
+                    if idx >=0:
+                        entry.setCurrentIndex(idx)
+                else:
+                    value = order.get(field_name, '')
+                    entry.setText(str(value))
+            self.update_available_stock()
+
+    def add_sales_order(self):
+        # 原有代码不变
+        # ...
+        try:
+            new_order = {}
+            for field_name, entry in self.entries.items():
+                if isinstance(entry, QComboBox):
+                    value = entry.currentText().strip()
+                elif isinstance(entry, QListWidget):
+                    selected_items = entry.selectedItems()
+                    selected_order_nbs = [it.data(Qt.ItemDataRole.UserRole) for it in selected_items]
+                    if not selected_order_nbs:
+                        QMessageBox.warning(self, "添加失败", "请至少选择一个订单号！")
+                        return
+                    value = ','.join(selected_order_nbs)
+                else:
+                    value = entry.text().strip()
+                new_order[field_name] = value
+
+            new_order['Order_Date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            new_order['Shipped_Date'] = ''
+
+            quantity_cs_sold = int(new_order['Quantity_CS_Sold']) if new_order['Quantity_CS_Sold'] else 0
+            selected_order_nbs = new_order['Order_Nb'].split(',')
+            product_id = new_order.get('Product_ID')
+            if selected_order_nbs:
+                product_name, btl_per_cs = get_inventory_info(product_id, selected_order_nbs[0])
+            else:
+                product_name, btl_per_cs = '', 0
+            new_order['Product_Name'] = product_name
+            new_order['BTL_PER_CS'] = btl_per_cs
+
+            price_per_bottle = float(new_order['Price_per_bottle']) if new_order['Price_per_bottle'] else 0.0
+            if price_per_bottle == 0.0:
+                QMessageBox.warning(self, "添加失败", "单瓶售价不能为0！")
+                return
+
+            total_available_cs = 0
+            for order_nb in selected_order_nbs:
+                inventory_item = next((item for item in inventory if item['Order_Nb'] == order_nb), None)
+                if inventory_item:
+                    current_stock_cs = int(inventory_item.get('Current_Stock_CS', 0))
+                    total_available_cs += current_stock_cs
+
+            if total_available_cs < quantity_cs_sold:
+                QMessageBox.warning(self, "库存不足", f"库存不足！可用: {total_available_cs}箱，需要: {quantity_cs_sold}箱")
+                return
+
+            deduction_details = []
+            remaining_cs_to_sell = quantity_cs_sold
+            total_amount = 0.0
+            total_btl = 0
+
+            for order_nb in selected_order_nbs:
+                inventory_item = next((item for item in inventory if item['Order_Nb'] == order_nb), None)
+                if not inventory_item:
+                    continue
+                btl_per_cs_order = int(inventory_item['BTL PER CS'])
+                current_stock_cs = int(inventory_item['Current_Stock_CS'])
+
+                if remaining_cs_to_sell <= current_stock_cs:
+                    deduct_cs = remaining_cs_to_sell
+                    update_inventory(
+                        new_order['Product_ID'],
+                        order_nb,
+                        -deduct_cs,
+                        inventory_item.get('Arrival_Date'),
+                        inventory_item.get('Creation_Date'),
+                        inventory_item.get('Product_Name'),
+                        inventory_item.get('SKU_CLS'),
+                        btl_per_cs_order,
+                        operation_type='sales',
+                        sale_date=new_order['Order_Date'],
+                        sales_orders=new_order['Sales_ID']
+                    )
+                    deduction_details.append({'Order_Nb':order_nb,'Deduct_CS':deduct_cs})
+                    total_amount += deduct_cs * btl_per_cs_order * price_per_bottle
+                    total_btl += deduct_cs * btl_per_cs_order
+                    remaining_cs_to_sell = 0
+                    break
+                else:
+                    deduct_cs = current_stock_cs
+                    update_inventory(
+                        new_order['Product_ID'],
+                        order_nb,
+                        -deduct_cs,
+                        inventory_item.get('Arrival_Date'),
+                        inventory_item.get('Creation_Date'),
+                        inventory_item.get('Product_Name'),
+                        inventory_item.get('SKU_CLS'),
+                        btl_per_cs_order,
+                        operation_type='sales',
+                        sale_date=new_order['Order_Date'],
+                        sales_orders=new_order['Sales_ID']
+                    )
+                    deduction_details.append({'Order_Nb':order_nb,'Deduct_CS':deduct_cs})
+                    total_amount += deduct_cs * btl_per_cs_order * price_per_bottle
+                    total_btl += deduct_cs * btl_per_cs_order
+                    remaining_cs_to_sell -= deduct_cs
+
+            new_order['Deduction_Details'] = deduction_details
+            new_order['Total_Amount'] = total_amount
+            new_order['Total_Quantity_BTL_Sold'] = total_btl
+
+            sales_orders.append(new_order)
+            save_sales_order_to_db(new_order)
+            self.update_sales_order_table()
+            QMessageBox.information(self, "成功", f"销售订单 {new_order['Sales_ID']} 已添加，总金额：{total_amount:.2f} €")
+
+        except Exception as e:
+            print(f"添加销售订单时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"添加销售订单时发生错误：{e}")
+
+    def update_sales_order(self):
+        # 您可根据需要实现更新逻辑
+        print("功能开发中")
+
+    def delete_sales_order(self):
+        try:
+            selected_rows = self.sales_order_table.selectionModel().selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(self, "删除错误", "请先选择要删除的销售订单！")
+                return
+
+            for index in selected_rows:
+                row = index.row()
+                fs_orders = self.get_filtered_and_sorted_sales_orders()
+                order = fs_orders[row]
+                sales_id = order['Sales_ID']
+                if order:
+                    restore_inventory(order)
+                    sales_orders.remove(order)
+                    delete_sales_order_from_db(sales_id)
+
+            self.update_sales_order_table()
+            QMessageBox.information(self, "成功", "选中的销售订单已删除。")
+
+        except Exception as e:
+            print(f"删除销售订单时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"删除销售订单时发生错误：{e}")
+
+    def get_filtered_and_sorted_sales_orders(self):
+        filtered = sales_orders.copy()
+        filter_field = self.filter_field_combo.currentText()
+        filter_value = self.filter_field_input.text().strip()
+
+        if filter_value:
+            pattern = None
+            if '*' in filter_value:
+                pattern = re.escape(filter_value).replace(r'\*', '.*')
+                regex = re.compile(pattern, re.IGNORECASE)
+            def match_field(val):
+                if pattern:
+                    return bool(regex.search(str(val)))
+                else:
+                    return filter_value.lower() in str(val).lower()
+
+            if filter_field == "按订单日期":
+                filtered = [o for o in filtered if match_field(o.get('Order_Date',''))]
+            elif filter_field == "按客户编号":
+                filtered = [o for o in filtered if match_field(o.get('Customer_ID',''))]
+            elif filter_field == "按采购订单号":
+                filtered = [o for o in filtered if match_field(o.get('Order_Nb',''))]
+            elif filter_field == "按产品编号":
+                filtered = [o for o in filtered if match_field(o.get('Product_ID',''))]
+            elif filter_field == "按产品名称":
+                filtered = [o for o in filtered if match_field(o.get('Product_Name',''))]
+
+        sort_option = self.sort_combo.currentText()
+        def sort_key(o):
+            if sort_option == "按订单日期":
+                return o.get('Order_Date','')
+            elif sort_option == "按客户编号":
+                return o.get('Customer_ID','')
+            elif sort_option == "按销售订单号":
+                return o.get('Sales_ID','')
+            elif sort_option == "按采购订单号":
+                return o.get('Order_Nb','')
+            elif sort_option == "按产品编号":
+                return o.get('Product_ID','')
+            elif sort_option == "按产品名称":
+                return o.get('Product_Name','')
+            elif sort_option == "按总金额":
+                try:
+                    return float(o.get('Total_Amount',0))
+                except:
+                    return 0
+            return ''
+
+        filtered = sorted(filtered, key=sort_key)
+        return filtered
+
+    def update_sales_order_table(self):
+        self.sales_order_table.blockSignals(True)
+
+        filtered_sorted_orders = self.get_filtered_and_sorted_sales_orders()
+        self.sales_order_table.setRowCount(0)
+        self.sales_order_table.setRowCount(len(filtered_sorted_orders))
+        for row, order in enumerate(filtered_sorted_orders):
+            for col, (label_text, field_name) in enumerate(self.table_fields):
+                value = order.get(field_name, "")
+                item = QTableWidgetItem(str(value))
+                if field_name == 'Remarks':
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.sales_order_table.setItem(row, col, item)
+
+        self.sales_order_table.blockSignals(False)
+# price_calculator.py
+
+from PyQt6.QtWidgets import (
+    QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
+    QDialog, QMessageBox
+)
+from data import purchase_orders, save_purchase_order_to_db
+import math
+
+# 默认配置参数
+config_params = {
+    'Total COGS': {
+        'New_listing_SKU_cfg': 84,
+        'Storage_cfg': 0.47,
+        'Predict_Storage_Days': 100,
+        'Allocation_Fee_cfg': 0.16,
+        'Administration_cfg': 0.24,
+        'Receiving_cfg': 0.46,
+        'Assembly_cfg': 1.14,
+        'Barcode_cfg': 0.44,
+        'Damage_And_Retention_Sample_cfg': 0
+    },
+    'CIF': {
+        'Strip Label Cost EURO': 0.37,
+        'Total Freight CAD': 35
+    },
+    'WHLSE': {
+        'RECYCLE RATE': 0.09,
+        'PLUS DUTY': 0
+    }
+}
+
+def open_price_calculator(order_details_window):
+    calculator_window = QDialog()
+    calculator_window.setWindowTitle("价格计算器")
+    layout = QVBoxLayout()
+
+    # 订单号输入字段
+    order_nb_entry = QLineEdit()
+    layout.addWidget(QLabel("订单号:"))
+    layout.addWidget(order_nb_entry)
+
+    # 显示计算结果的字段
+    results_labels = {
+        'INVOICE PRICE': QLineEdit(),
+        'INVOICE CS': QLineEdit(),
+        'WHOLESALE BTL': QLineEdit(),
+        'WHOLESALE CS': QLineEdit(),
+        'TOTAL Freight CAD': QLineEdit(),
+        'PROFIT PER BT': QLineEdit(),
+        'PROFIT PER CS': QLineEdit(),
+        'PROFIT TOTAL': QLineEdit(),
+        'QUANTITY BTL': QLineEdit(),
+        'TOTAL AMOUNT': QLineEdit()
+    }
+
+    # 设置这些字段为只读
+    for key, entry in results_labels.items():
+        entry.setReadOnly(True)
+        layout.addWidget(QLabel(f"{key}:"))
+        layout.addWidget(entry)
+
+    # 计算和配置按钮
+    calc_button = QPushButton("计算")
+    calc_button.clicked.connect(lambda: calculate_and_display(order_nb_entry.text(), results_labels))
+    layout.addWidget(calc_button)
+
+    update_button = QPushButton("更新")
+    update_button.clicked.connect(lambda: update_order(order_nb_entry.text(), results_labels, order_details_window))
+    layout.addWidget(update_button)
+
+    calculator_window.setLayout(layout)
+    calculator_window.exec()
+
+def calculate_and_display(order_nb, results_labels):
+    try:
+        # 根据订单号获取订单
+        order = next((o for o in purchase_orders if o['Order Nb'] == order_nb), None)
+        if not order:
+            QMessageBox.warning(None, "错误", "订单号不存在")
+            return
+        # 检查 EXW 汇率是否为 0
+        EXW_rate = float(order.get('EXW Exchange Rate', 0))
+        if EXW_rate == 0:
+            QMessageBox.warning(None, "错误", "EXW 汇率不能为 0，请检查订单信息")
+            return  # 如果汇率为 0，则终止计算
+        # 计算 QUANTITY BTL 和 TOTAL AMOUNT
+        QUANTITY_CS = int(order.get('QUANTITY CS', 0))
+        BTL_PER_CS = int(order.get('BTL PER CS', 0))
+        EXW = float(order.get('EXW EURO', 0))
+
+        QUANTITY_BTL = QUANTITY_CS * BTL_PER_CS
+        TOTAL_AMOUNT = EXW * QUANTITY_BTL
+
+        # 计算其他价格
+        INVOICE_PRICE, INVOICE_CS, CIF, TOTAL_Freight_CAD, Total_COGS = calculate_invoice_price(order)
+        WHOLESALE_BTL, WHOLESALE_CS = calculate_wholesale(order, INVOICE_CS)
+
+        # 计算 PROFIT PER BT、PROFIT PER CS 和 PROFIT TOTAL
+        expected_profit = float(order.get('Expected Profit', 0))
+        PROFIT_PER_BT = INVOICE_PRICE - Total_COGS
+        PROFIT_PER_CS = PROFIT_PER_BT * BTL_PER_CS
+        PROFIT_TOTAL = PROFIT_PER_CS * QUANTITY_CS
+
+        # 显示结果
+        results_labels['INVOICE PRICE'].setText(str(round(INVOICE_PRICE, 2)))
+        results_labels['INVOICE CS'].setText(str(round(INVOICE_CS, 2)))
+        results_labels['WHOLESALE BTL'].setText(str(round(WHOLESALE_BTL, 2)))
+        results_labels['WHOLESALE CS'].setText(str(round(WHOLESALE_CS, 2)))
+        results_labels['TOTAL Freight CAD'].setText(str(round(TOTAL_Freight_CAD, 2)))
+        results_labels['PROFIT PER BT'].setText(str(round(PROFIT_PER_BT, 2)))
+        results_labels['PROFIT PER CS'].setText(str(round(PROFIT_PER_CS, 2)))
+        results_labels['PROFIT TOTAL'].setText(str(round(PROFIT_TOTAL, 2)))
+        results_labels['QUANTITY BTL'].setText(str(QUANTITY_BTL))
+        results_labels['TOTAL AMOUNT'].setText(str(round(TOTAL_AMOUNT, 2)))
+
+        QMessageBox.information(None, "计算成功", "价格计算完成")
+    except Exception as e:
+        print(f"计算时发生错误：{e}")
+        QMessageBox.critical(None, "计算错误", f"计算时发生错误：{e}")
+
+def update_order(order_nb, results_labels, order_details_window):
+    if not order_nb:
+        QMessageBox.warning(None, "更新错误", "订单号为空")
+        return
+
+    try:
+        # 获取订单对象
+        order = next((o for o in purchase_orders if o['Order Nb'] == order_nb), None)
+        if not order:
+            QMessageBox.warning(None, "更新错误", "订单不存在")
+            return
+
+        # 更新订单的数据
+        updated_fields = {}
+        for key in ['INVOICE PRICE', 'INVOICE CS', 'WHOLESALE BTL', 'WHOLESALE CS', 'TOTAL Freight CAD',
+                    'PROFIT PER BT', 'PROFIT PER CS', 'PROFIT TOTAL', 'QUANTITY BTL', 'TOTAL AMOUNT']:
+            value = results_labels[key].text().strip()
+            if value:
+                if key == 'TOTAL Freight CAD':
+                    order['TOTAL Freight'] = value
+                elif key == 'TOTAL AMOUNT':
+                    order['TOTAL AMOUNT EURO'] = value
+                else:
+                    order[key] = value
+                updated_fields[key] = value
+
+        # 将更新后的订单保存到数据库
+        save_purchase_order_to_db(order)
+
+        # 更新表格显示
+        if order_details_window:
+            order_details_window.update_order_table()
+
+        QMessageBox.information(None, "更新成功", f"订单 {order_nb} 已成功更新")
+    except Exception as e:
+        print(f"更新订单时发生错误：{e}")
+        QMessageBox.critical(None, "更新错误", f"更新订单时发生错误：{e}")
+
+def calculate_invoice_price(order):
+    try:
+        # 验证并提取数据
+        EXW = float(order.get('EXW EURO', 0))
+        EXW_rate = float(order.get('EXW Exchange Rate', 0))
+        BTL_PER_CS = int(order.get('BTL PER CS', 0))
+        QUANTITY_CS = int(order.get('QUANTITY CS', 0))
+        expected_profit = float(order.get('Expected Profit', 0))
+        domestic_freight = float(order.get('Domestic Freight CAD', 0))
+        international_freight = float(order.get('International Freight EURO', 0))
+        international_freight_rate = float(order.get('International Freight Exchange Rate', 0))
+
+        # CIF Calculation
+        Strip_Label_Cost_CAD = config_params['CIF']['Strip Label Cost EURO'] * EXW_rate
+        TOTAL_Freight_CAD = domestic_freight + international_freight * international_freight_rate
+        EXW_CAD = EXW * EXW_rate
+        CIF = EXW_CAD + Strip_Label_Cost_CAD + TOTAL_Freight_CAD
+
+        # Total COGS Calculation
+        New_listing_SKU = config_params['Total COGS']['New_listing_SKU_cfg'] / (BTL_PER_CS * QUANTITY_CS)
+        Storage = config_params['Total COGS']['Storage_cfg'] / 30 / BTL_PER_CS * config_params['Total COGS']['Predict_Storage_Days']
+        Allocation_Fee = config_params['Total COGS']['Allocation_Fee_cfg'] / BTL_PER_CS
+        Administration = config_params['Total COGS']['Administration_cfg'] / BTL_PER_CS
+        Receiving = config_params['Total COGS']['Receiving_cfg'] / BTL_PER_CS
+        Assembly = config_params['Total COGS']['Assembly_cfg'] / BTL_PER_CS
+        Barcode = config_params['Total COGS']['Barcode_cfg'] / BTL_PER_CS
+        Damage = config_params['Total COGS']['Damage_And_Retention_Sample_cfg']
+        GST_Service_AGLC = (
+            New_listing_SKU + Storage + Allocation_Fee + Administration + Receiving + Assembly + Barcode) * 0.05
+
+        Total_COGS = CIF + New_listing_SKU + Storage + Allocation_Fee + Administration + Receiving + Assembly + Barcode + Damage + GST_Service_AGLC
+
+        # INVOICE PRICE and INVOICE CS Calculation
+        INVOICE_PRICE = Total_COGS / (1 - expected_profit)
+        INVOICE_CS = INVOICE_PRICE * BTL_PER_CS
+
+        return INVOICE_PRICE, INVOICE_CS, CIF, TOTAL_Freight_CAD, Total_COGS
+    except Exception as e:
+        print(f"计算发票价格时发生错误：{e}")
+        return None, None, None, None, None
+
+def calculate_wholesale(order, INVOICE_CS):
+    try:
+        BTL_PER_CS = int(order.get('BTL PER CS', 0))
+        SIZE = float(order.get('SIZE', 0))
+        ALC = float(order.get('ALC.', 0))
+
+        # WHOLESALE Calculation
+        if SIZE > 1:
+            DEPOSIT = 0.25
+        else:
+            DEPOSIT = 0.1
+
+        # MARKUP RATE
+        if ALC <= 16:
+            MARKUP_RATE = 3.91
+        else:
+            MARKUP_RATE = 6.56
+
+        # TOTAL COST CASE Calculation
+        PLUS_MARKUP = SIZE * BTL_PER_CS * MARKUP_RATE
+        PLUS_RECYCLE = math.floor(config_params['WHLSE']['RECYCLE RATE'] * BTL_PER_CS * 1000) / 1000
+        PLUS_EXCISE = calculate_excise_rate(ALC) * SIZE * BTL_PER_CS
+
+        TOTAL_COST_CASE = INVOICE_CS + PLUS_MARKUP + PLUS_RECYCLE + config_params['WHLSE']['PLUS DUTY'] + PLUS_EXCISE
+        COST_UNIT = TOTAL_COST_CASE / BTL_PER_CS
+
+        # WHOLESALE BTL Calculation
+        ROUNDUP_UNIT = math.ceil(COST_UNIT * 100) / 100
+        PLUS_GST = ROUNDUP_UNIT * 0.05
+        SUB_TOTAL = PLUS_GST + ROUNDUP_UNIT
+        ROUNDED = round(SUB_TOTAL, 2)
+        WHOLESALE_BTL = ROUNDED + DEPOSIT
+        WHOLESALE_CS = WHOLESALE_BTL * BTL_PER_CS
+
+        return WHOLESALE_BTL, WHOLESALE_CS
+    except Exception as e:
+        print(f"计算批发价格时发生错误：{e}")
+        return None, None
+
+def calculate_excise_rate(ALC):
+    if ALC <= 0.012:
+        return 0.022
+    elif 0.012 < ALC <= 0.07:
+        return 0.337
+    elif 0.07 < ALC <= 0.229:
+        return 0.702
+    else:
+        QMessageBox.warning(None, "警告", "请确认酒精度是否正确")
+        return 0
+# product_management.py
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox
+)
+from PyQt6.QtCore import Qt
+import datetime
+import re
 
 from data import (
-    initialize_database,
-    load_purchase_orders_from_db,
-    load_sales_orders_from_db,
-    load_inventory_from_db,
-    load_products_from_db  # 新增
+    products, save_product_to_db, delete_product_from_db,
+    load_products_from_db, data_manager, get_product_by_sku
 )
-from order_details import OrderDetailsWindow
-from inventory_management import InventoryManagementWindow
-from sales_order import SalesOrderWindow
-from product_management import ProductManagementWindow  # 新增
 
-# 创建主窗口
-app = QApplication(sys.argv)
-window = QWidget()
-window.setWindowTitle("订单管理系统")
-window.setGeometry(100, 100, 800, 600)
+class ProductManagementWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("产品管理")
+        self.setGeometry(200, 200, 800, 600)
 
-# 程序启动时加载数据
-initialize_database()
-load_purchase_orders_from_db()
-load_sales_orders_from_db()
-load_inventory_from_db()
-load_products_from_db()  # 新增
+        self.layout_main = QVBoxLayout()
 
-# 布局设置
-layout_main = QVBoxLayout()
+        # 输入区域
+        self.layout_inputs = QGridLayout()
+        self.entries = {}
 
-# 按钮区域
-layout_buttons = QHBoxLayout()
+        fields = [
+            ('SKU CLS', 'SKU_CLS'),
+            ('ITEM Name', 'ITEM_Name'),
+            ('Category', 'Category'),
+            ('Size', 'Size'),
+            ('ALC.', 'ALC'),
+            ('BTL PER CS', 'BTL_PER_CS'),
+            ('Supplier', 'Supplier'),
+        ]
 
-button_order_details = QPushButton("采购订单管理")
-button_order_details.clicked.connect(lambda: open_order_details_window())
+        for row, (label_text, field_name) in enumerate(fields):
+            label = QLabel(label_text + ":")
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            entry = QLineEdit()
+            entry.setFixedWidth(300)
+            entry.setStyleSheet("border: 1px solid lightgray;")
+            self.entries[field_name] = entry
+            self.layout_inputs.addWidget(label, row, 0)
+            self.layout_inputs.addWidget(entry, row, 1)
 
-button_sales_order = QPushButton("销售订单管理")
-button_sales_order.clicked.connect(lambda: open_sales_order_window())
+        self.layout_main.addLayout(self.layout_inputs)
 
-button_inventory_management = QPushButton("库存管理")
-button_inventory_management.clicked.connect(lambda: open_inventory_management_window())
+        # 按钮区域
+        layout_buttons = QHBoxLayout()
 
-button_product_management = QPushButton("产品管理")  # 新增
-button_product_management.clicked.connect(lambda: open_product_management_window())  # 新增
+        self.button_add = QPushButton("添加产品")
+        self.button_add.clicked.connect(self.add_product)
+        self.button_update = QPushButton("更新产品")
+        self.button_update.clicked.connect(self.update_product)
+        self.button_delete = QPushButton("删除产品")
+        self.button_delete.clicked.connect(self.delete_product)
 
-layout_buttons.addWidget(button_order_details)
-layout_buttons.addWidget(button_sales_order)
-layout_buttons.addWidget(button_inventory_management)
-layout_buttons.addWidget(button_product_management)  # 新增
+        layout_buttons.addWidget(self.button_add)
+        layout_buttons.addWidget(self.button_update)
+        layout_buttons.addWidget(self.button_delete)
 
-layout_main.addLayout(layout_buttons)
+        self.layout_main.addLayout(layout_buttons)
 
-# 定义窗口实例
-order_details_window = None
-sales_order_window = None
-inventory_management_window = None
-product_management_window = None  # 新增
+        # 添加排序和过滤区域
+        control_layout = QHBoxLayout()
 
-# 打开采购订单窗口
-def open_order_details_window():
-    global order_details_window
-    try:
-        if order_details_window is None:
-            order_details_window = OrderDetailsWindow()
-        else:
-            order_details_window.update_order_table()
-        order_details_window.show()
-    except Exception as e:
-        print(f"打开采购订单窗口时发生错误：{e}")
-        QMessageBox.critical(None, "错误", f"打开采购订单窗口时发生错误：{e}")
+        # 排序选项
+        sort_label = QLabel("排序规则:")
+        self.sort_combo = QComboBox()
+        # 定义产品管理的排序选项
+        self.sort_combo.addItems(["按SKU CLS", "按产品名称", "按Supplier", "按BTL PER CS", "按创建日期"])
+        self.sort_combo.currentIndexChanged.connect(self.update_product_table)
 
-# 打开销售订单窗口
-def open_sales_order_window():
-    global sales_order_window
-    try:
-        if sales_order_window is None:
-            sales_order_window = SalesOrderWindow()
-        else:
-            sales_order_window.update_sales_order_table()
-        sales_order_window.show()
-    except Exception as e:
-        print(f"打开销售订单窗口时发生错误：{e}")
-        QMessageBox.critical(None, "错误", f"打开销售订单窗口时发生错误：{e}")
+        control_layout.addWidget(sort_label)
+        control_layout.addWidget(self.sort_combo)
 
-# 打开库存管理窗口
-def open_inventory_management_window():
-    global inventory_management_window
-    try:
-        if inventory_management_window is None:
-            inventory_management_window = InventoryManagementWindow()
-        else:
-            inventory_management_window.update_inventory_tables()
-        inventory_management_window.show()
-    except Exception as e:
-        print(f"打开库存管理窗口时发生错误：{e}")
-        QMessageBox.critical(None, "错误", f"打开库存管理窗口时发生错误：{e}")
+        # 过滤选项
+        filter_field_label = QLabel("过滤条件:")
+        self.filter_field_combo = QComboBox()
+        self.filter_field_combo.addItems(["按SKU CLS", "按产品名称", "按Supplier"])
+        self.filter_field_combo.currentIndexChanged.connect(self.update_product_table)
 
-# 打开产品管理窗口
-def open_product_management_window():
-    global product_management_window
-    try:
-        if product_management_window is None:
-            product_management_window = ProductManagementWindow()
-        else:
-            product_management_window.update_product_table()
-        product_management_window.show()
-    except Exception as e:
-        print(f"打开产品管理窗口时发生错误：{e}")
-        QMessageBox.critical(None, "错误", f"打开产品管理窗口时发生错误：{e}")
+        self.filter_field_input = QLineEdit()
+        self.filter_field_input.setPlaceholderText("输入过滤内容(支持*通配符)")
+        self.filter_field_input.textChanged.connect(self.update_product_table)
+        self.filter_field_input.setFixedWidth(200)
 
-# 设置主布局
-window.setLayout(layout_main)
-window.show()
+        control_layout.addWidget(filter_field_label)
+        control_layout.addWidget(self.filter_field_combo)
+        control_layout.addWidget(self.filter_field_input)
 
-if __name__ == "__main__":
-    sys.exit(app.exec())
+        control_layout.addStretch(1)
+
+        self.layout_main.addLayout(control_layout)
+
+        # 产品列表显示区域
+        self.product_table = QTableWidget()
+        self.product_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.product_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.product_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.product_table.setColumnCount(8)
+        self.product_table.setHorizontalHeaderLabels([
+            'SKU CLS', 'ITEM Name', 'Category', 'Size', 'ALC.', 'BTL PER CS', 'Supplier', '创建日期'
+        ])
+        self.product_table.verticalHeader().setVisible(False)
+        self.product_table.horizontalHeader().setStretchLastSection(True)
+        self.product_table.setWordWrap(True)
+        self.product_table.resizeColumnsToContents()
+
+        # 连接产品表格的选择信号到处理函数
+        self.product_table.selectionModel().selectionChanged.connect(self.on_product_selected)
+
+        self.layout_main.addWidget(self.product_table)
+
+        self.setLayout(self.layout_main)
+
+        # 加载产品数据
+        load_products_from_db()
+        self.update_product_table()
+
+        # 连接数据变化信号到更新方法
+        data_manager.products_changed.connect(self.update_product_table)
+
+    def on_product_selected(self, selected, deselected):
+        try:
+            indexes = self.product_table.selectionModel().selectedRows()
+            if indexes:
+                index = indexes[0]
+                row = index.row()
+                # 根据当前显示的产品列表获取产品
+                # 因为update_product_table会根据过滤排序产生一个局部列表，所以需要在方法中保留这个列表
+                # 在这里我们再次调用 get_filtered_and_sorted_products 获取当前显示的列表
+                displayed_products = self.get_filtered_and_sorted_products()
+                product = displayed_products[row]
+
+                for field_name, entry in self.entries.items():
+                    value = product.get(field_name, "")
+                    entry.setText(str(value))
+            else:
+                for entry in self.entries.values():
+                    entry.clear()
+        except Exception as e:
+            print(f"处理产品选择时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"处理产品选择时发生错误：{e}")
+
+    def get_filtered_and_sorted_products(self):
+        # 根据过滤和排序条件，返回处理后的产品列表
+        filtered_products = products.copy()
+
+        # 获取过滤条件
+        filter_field = self.filter_field_combo.currentText()
+        filter_value = self.filter_field_input.text().strip()
+
+        # 执行过滤逻辑
+        if filter_value:
+            # 如果包含'*'，需要模糊匹配
+            if '*' in filter_value:
+                pattern = re.escape(filter_value).replace(r'\*', '.*')
+                regex = re.compile(pattern, re.IGNORECASE)
+            
+            if filter_field == "按SKU CLS":
+                if '*' in filter_value:
+                    filtered_products = [p for p in filtered_products if regex.search(p.get('SKU_CLS', ''))]
+                else:
+                    filtered_products = [p for p in filtered_products if filter_value.lower() in p.get('SKU_CLS', '').lower()]
+            elif filter_field == "按产品名称":
+                # 产品名称对ITEM_Name字段过滤
+                if '*' in filter_value:
+                    filtered_products = [p for p in filtered_products if regex.search(p.get('ITEM_Name', ''))]
+                else:
+                    filtered_products = [p for p in filtered_products if filter_value.lower() in p.get('ITEM_Name', '').lower()]
+            elif filter_field == "按Supplier":
+                if '*' in filter_value:
+                    filtered_products = [p for p in filtered_products if regex.search(p.get('Supplier', ''))]
+                else:
+                    filtered_products = [p for p in filtered_products if filter_value.lower() in p.get('Supplier', '').lower()]
+
+        # 获取排序规则
+        sort_option = self.sort_combo.currentText()
+        if sort_option == "按SKU CLS":
+            filtered_products = sorted(filtered_products, key=lambda x: x.get('SKU_CLS', ''))
+        elif sort_option == "按产品名称":
+            filtered_products = sorted(filtered_products, key=lambda x: x.get('ITEM_Name', ''))
+        elif sort_option == "按Supplier":
+            filtered_products = sorted(filtered_products, key=lambda x: x.get('Supplier', ''))
+        elif sort_option == "按BTL PER CS":
+            filtered_products = sorted(filtered_products, key=lambda x: int(x.get('BTL_PER_CS', 0)))
+        elif sort_option == "按创建日期":
+            # Creation_Date格式为 "YYYY-MM-DD HH:MM:SS"，字符串比较即可按时间顺序排序
+            filtered_products = sorted(filtered_products, key=lambda x: x.get('Creation_Date', ''))
+
+        return filtered_products
+
+    def update_product_table(self):
+        # 在更新表格显示前，获取过滤和排序后的产品列表
+        displayed_products = self.get_filtered_and_sorted_products()
+
+        self.product_table.setRowCount(0)
+        self.product_table.setRowCount(len(displayed_products))
+        for row, product in enumerate(displayed_products):
+            self.product_table.setItem(row, 0, QTableWidgetItem(product.get('SKU_CLS', '')))
+            self.product_table.setItem(row, 1, QTableWidgetItem(product.get('ITEM_Name', '')))
+            self.product_table.setItem(row, 2, QTableWidgetItem(product.get('Category', '')))
+            self.product_table.setItem(row, 3, QTableWidgetItem(str(product.get('Size', ''))))
+            self.product_table.setItem(row, 4, QTableWidgetItem(str(product.get('ALC', ''))))
+            self.product_table.setItem(row, 5, QTableWidgetItem(str(product.get('BTL_PER_CS', ''))))
+            self.product_table.setItem(row, 6, QTableWidgetItem(product.get('Supplier', '')))
+            self.product_table.setItem(row, 7, QTableWidgetItem(product.get('Creation_Date', '')))
+
+    def add_product(self):
+        try:
+            new_product = {}
+            for field_name, entry in self.entries.items():
+                value = entry.text().strip()
+                if not value:
+                    QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
+                    return
+                new_product[field_name] = value
+
+            # 检查 SKU_CLS 是否已存在
+            sku_cls = new_product['SKU_CLS']
+            if any(product['SKU_CLS'] == sku_cls for product in products):
+                QMessageBox.warning(self, "添加失败", f"产品 {sku_cls} 已存在！")
+                return
+
+            # 转换数据类型
+            try:
+                new_product['Size'] = float(new_product['Size'])
+                new_product['ALC'] = float(new_product['ALC'])
+                new_product['BTL_PER_CS'] = int(new_product['BTL_PER_CS'])
+            except ValueError:
+                QMessageBox.warning(self, "输入错误", "Size、ALC.、BTL PER CS 必须是有效的数字！")
+                return
+
+            new_product['Creation_Date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            products.append(new_product)
+            save_product_to_db(new_product)
+            data_manager.products_changed.emit()
+
+            self.update_product_table()
+            QMessageBox.information(self, "成功", f"产品 {sku_cls} 已添加。")
+        except Exception as e:
+            print(f"添加产品时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"添加产品时发生错误：{e}")
+
+    def update_product(self):
+        try:
+            sku_cls = self.entries['SKU_CLS'].text().strip()
+            if not sku_cls:
+                QMessageBox.warning(self, "更新失败", "请输入 SKU CLS！")
+                return
+
+            # 获取现有产品数据
+            existing_product = get_product_by_sku(sku_cls)
+            if not existing_product:
+                QMessageBox.warning(self, "更新失败", f"产品 {sku_cls} 不存在！")
+                return
+
+            # 准备更新后的产品数据
+            updated_product = {}
+            for field_name, entry in self.entries.items():
+                value = entry.text().strip()
+                if not value:
+                    QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
+                    return
+                updated_product[field_name] = value
+
+            # 转换数据类型
+            try:
+                updated_product['Size'] = float(updated_product['Size'])
+                updated_product['ALC'] = float(updated_product['ALC'])
+                updated_product['BTL_PER_CS'] = int(updated_product['BTL_PER_CS'])
+            except ValueError:
+                QMessageBox.warning(self, "输入错误", "Size、ALC.、BTL PER CS 必须是有效的数字！")
+                return
+
+            # 保留创建日期
+            updated_product['Creation_Date'] = existing_product['Creation_Date']
+
+            # 更新产品列表和数据库
+            index = products.index(existing_product)
+            products[index] = updated_product
+            save_product_to_db(updated_product)
+            data_manager.products_changed.emit()
+
+            self.update_product_table()
+            QMessageBox.information(self, "成功", f"产品 {sku_cls} 已更新。")
+        except Exception as e:
+            print(f"更新产品时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"更新产品时发生错误：{e}")
+
+    def delete_product(self):
+        try:
+            sku_cls = self.entries['SKU_CLS'].text().strip()
+            if not sku_cls:
+                QMessageBox.warning(self, "删除失败", "请输入 SKU CLS！")
+                return
+
+            product = get_product_by_sku(sku_cls)
+            if product:
+                # 从产品列表中删除
+                products.remove(product)
+                # 从数据库中删除
+                delete_product_from_db(sku_cls)
+                data_manager.products_changed.emit()
+
+                self.update_product_table()
+                QMessageBox.information(self, "成功", f"产品 {sku_cls} 已删除。")
+            else:
+                QMessageBox.information(self, "删除失败", f"未找到 SKU CLS 为 {sku_cls} 的产品。")
+        except Exception as e:
+            print(f"删除产品时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"删除产品时发生错误：{e}")
