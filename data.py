@@ -60,7 +60,7 @@ data_manager = DataManager()
 
 # 初始化数据库
 def initialize_database():
-    conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+    conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
     cursor = conn.cursor()
 
     # 创建采购订单表
@@ -130,7 +130,7 @@ def initialize_database():
 # 加载采购订单
 def load_purchase_orders_from_db():
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM purchase_orders')
         rows = cursor.fetchall()
@@ -151,7 +151,7 @@ def load_purchase_orders_from_db():
 # 保存采购订单
 def save_purchase_order_to_db(order):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         placeholders = ', '.join(['?' for _ in order.keys()])
         field_names = ', '.join([f'"{key}"' for key in order.keys()])
@@ -170,7 +170,7 @@ def save_purchase_order_to_db(order):
 # 删除采购订单
 def delete_purchase_order_from_db(order_nb):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM purchase_orders WHERE "Order Nb" = ?', (order_nb,))
         conn.commit()
@@ -182,7 +182,7 @@ def delete_purchase_order_from_db(order_nb):
 # 加载销售订单
 def load_sales_orders_from_db():
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM sales_orders')
         rows = cursor.fetchall()
@@ -206,7 +206,7 @@ def load_sales_orders_from_db():
 # 保存销售订单
 def save_sales_order_to_db(order):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
 
         # 序列化 Deduction_Details
@@ -233,7 +233,7 @@ def save_sales_order_to_db(order):
 # 删除销售订单
 def delete_sales_order_from_db(sales_id):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM sales_orders WHERE "Sales_ID" = ?', (sales_id,))
         conn.commit()
@@ -246,7 +246,7 @@ def delete_sales_order_from_db(sales_id):
 def load_inventory_from_db():
     try:
         global inventory
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM inventory')
@@ -268,7 +268,7 @@ def load_inventory_from_db():
 # 保存库存数据
 def save_inventory_to_db(product):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         placeholders = ', '.join(['?' for _ in product.keys()])
         field_names = ', '.join([f'"{key}"' for key in product.keys()])
@@ -287,7 +287,7 @@ def save_inventory_to_db(product):
 # 更新库存数量
 def update_inventory(product_id, order_nb, quantity_change_cs, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type, sale_date=None, sales_orders=None, operation_subtype=None, Pick_up_Date=None ):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         
         # 查询当前库存
@@ -365,7 +365,7 @@ def get_inventory_info(product_id, order_nb):
 # 更新库存中的 Arrival_Date
 def update_inventory_arrival_date(product_id, order_nb, arrival_date):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('UPDATE inventory SET "Arrival_Date" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?', (arrival_date, product_id, order_nb))
         conn.commit()
@@ -482,7 +482,7 @@ def get_WHOLESALE_BTL_price(product_id):
 # 加载产品数据
 def load_products_from_db():
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM products')
         rows = cursor.fetchall()
@@ -502,7 +502,7 @@ def load_products_from_db():
 # 保存产品
 def save_product_to_db(product):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         placeholders = ', '.join(['?' for _ in product.keys()])
         field_names = ', '.join([f'"{key}"' for key in product.keys()])
@@ -521,7 +521,7 @@ def save_product_to_db(product):
 # 删除产品
 def delete_product_from_db(sku_cls):
     try:
-        conn = sqlite3.connect(r'C:\Users\chloe\OneDrive\Order_Management_Tool\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM products WHERE "SKU_CLS" = ?', (sku_cls,))
         conn.commit()

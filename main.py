@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
 )
 import sys
-
+import file_compare
 from data import (
     initialize_database,
     load_purchase_orders_from_db,
@@ -45,15 +45,20 @@ button_sales_order.clicked.connect(lambda: open_sales_order_window())
 button_inventory_management = QPushButton("库存管理")
 button_inventory_management.clicked.connect(lambda: open_inventory_management_window())
 
-button_product_management = QPushButton("产品管理")  # 新增
-button_product_management.clicked.connect(lambda: open_product_management_window())  # 新增
+button_product_management = QPushButton("产品管理")  
+button_product_management.clicked.connect(lambda: open_product_management_window())  
+
+button_file_compare_tool = QPushButton("文件对比工具")
+button_file_compare_tool.clicked.connect(lambda: file_compare.open_file_compare_tool())
 
 layout_buttons.addWidget(button_order_details)
 layout_buttons.addWidget(button_sales_order)
 layout_buttons.addWidget(button_inventory_management)
-layout_buttons.addWidget(button_product_management)  # 新增
+layout_buttons.addWidget(button_product_management)
+layout_buttons.addWidget(button_file_compare_tool)
 
 layout_main.addLayout(layout_buttons)
+
 
 # 定义窗口实例
 order_details_window = None

@@ -793,11 +793,15 @@ class OrderDetailsWindow(QWidget):
                 QMessageBox.warning(self, "提示", "请先选择要比较的采购订单（可多选）。")
                 return
 
+            fs_orders = self.get_filtered_and_sorted_purchase_orders()
             selected_orders = []
             for index in selected_rows:
                 row = index.row()
-                order = purchase_orders[row]
+                order = fs_orders[row]
                 selected_orders.append(order)
+            for idx, order in enumerate(selected_orders):
+                print(f"第 {idx} 条订单：{order}")
+
 
             # 让用户选择注册文件（Excel 格式）
             options = QFileDialog.Option.DontUseNativeDialog
@@ -814,7 +818,7 @@ class OrderDetailsWindow(QWidget):
             registration_df.columns = registration_df.columns.str.lower()
 
             # 打印列名调试
-            print("读取的注册文件列名：", registration_df.columns.tolist())
+            #print("读取的注册文件列名：", registration_df.columns.tolist())
 
             # 确保 'sku cls' 字段存在
             if 'sku cls' not in registration_df.columns:
@@ -836,17 +840,16 @@ class OrderDetailsWindow(QWidget):
                     'wholesale cs_po': order.get('WHOLESALE CS', ''),
                     'supplier_po': order.get('Supplier', ''),
                     'item name_po': order.get('ITEM Name', ''),
-                    'ucc14_po': order.get('UCC14', ''),
-                    'ucc13_po': order.get('UCC13', '')
+                    'invoice cs_po': order.get('INVOICE CS', '')
                 }
 
 
                 # 打印 po_data
-                print("采购订单数据 po_data：", json.dumps(po_data, indent=2, ensure_ascii=False))
+                #print("采购订单数据 po_data：", json.dumps(po_data, indent=2, ensure_ascii=False))
 
 
             # 需要比较的字段（统一小写以匹配列名）
-            fields_to_compare = ['category', 'size', 'alc', 'btl per cs', 'wholesale cs', 'supplier', 'item name', 'ucc14', 'ucc13' ]
+            fields_to_compare = ['category', 'size', 'alc', 'btl per cs', 'wholesale cs', 'supplier', 'item name', 'invoice cs' ]
 
             # 在 DataFrame 中插入采购订单的信息
             for field in fields_to_compare:
@@ -862,13 +865,13 @@ class OrderDetailsWindow(QWidget):
             # 遍历注册文件，填入采购订单的信息并比较
             for idx, row in registration_df.iterrows():
                 sku_cls = str(row.get('sku cls', '')).strip().lower()  # 转换为小写
-                print(f"注册文件 SKU CLS: {sku_cls}")
+                #print(f"注册文件 SKU CLS: {sku_cls}")
                 if sku_cls in po_data:
-                    print(f"匹配到的采购订单信息: {po_data[sku_cls]}")
+                    #print(f"匹配到的采购订单信息: {po_data[sku_cls]}")
                     for field in fields_to_compare:
                         po_field = f"{field}_po"
                         po_value = po_data[sku_cls].get(f"{field}_PO", '')  # 从 po_data 获取值
-                        print(f"填入 {field}_PO 的值: {po_value}")
+                        #print(f"填入 {field}_PO 的值: {po_value}")
                         registration_df.at[idx, po_field] = po_data[sku_cls].get(f"{field}_po", '')
                 else:
                     print(f"未匹配到采购订单信息: {sku_cls}")
@@ -909,8 +912,8 @@ class OrderDetailsWindow(QWidget):
 
 
 
-            print("注册文件列名：", registration_df.columns.tolist())
-            print("插入后的列名：", registration_df.columns.tolist())
+            #print("注册文件列名：", registration_df.columns.tolist())
+            #print("插入后的列名：", registration_df.columns.tolist())
 
 
             if not save_file_name:
