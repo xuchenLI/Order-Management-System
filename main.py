@@ -1,5 +1,7 @@
 # main.py
-
+import os
+import shutil
+import datetime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox
 )
@@ -10,13 +12,76 @@ from data import (
     load_purchase_orders_from_db,
     load_sales_orders_from_db,
     load_inventory_from_db,
-    load_products_from_db  # 新增
+    load_products_from_db
 )
 from order_details import OrderDetailsWindow
 from inventory_management import InventoryManagementWindow
 from sales_order import SalesOrderWindow
-from product_management import ProductManagementWindow  # 新增
+from product_management import ProductManagementWindow  
 
+# 配置数据库和备份文件夹路径
+DB_PATH = r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db'
+BACKUP_FOLDER = r'C:\Users\mosho\OneDrive\Order_Management_Tool\backups'
+COUNTER_FILE = os.path.join(BACKUP_FOLDER, 'backup_counter.txt')
+def backup_database(backup_type):
+    if not os.path.exists(BACKUP_FOLDER):
+        os.makedirs(BACKUP_FOLDER)
+    
+    # 使用当天日期作为时间戳，确保一天内备份文件名固定
+    date_stamp = datetime.datetime.now().strftime('%Y%m%d')
+    if backup_type == "auto":
+        backup_file = os.path.join(BACKUP_FOLDER, f"orders_backup_auto_{date_stamp}.db")
+    elif backup_type == "periodic":
+        backup_file = os.path.join(BACKUP_FOLDER, f"orders_backup_periodic_{date_stamp}.db")
+    else:
+        backup_file = os.path.join(BACKUP_FOLDER, f"orders_backup_{backup_type}_{date_stamp}.db")
+    
+    try:
+        shutil.copy2(DB_PATH, backup_file)
+        print(f"[{backup_type}备份成功] 数据库已备份至：{backup_file}")
+    except Exception as e:
+        print(f"[{backup_type}备份失败] 无法备份数据库：{e}")
+
+def update_backup_counter():
+    """
+    更新备份计数器，每次启动程序调用此函数。
+    如果计数器文件不存在，则创建并初始化为 1；否则累加 1 并写回文件。
+    返回当前计数值。
+    """
+    # 如果备份目录不存在，则创建
+    if not os.path.exists(BACKUP_FOLDER):
+        os.makedirs(BACKUP_FOLDER)
+        
+    count = 0
+    if os.path.exists(COUNTER_FILE):
+        try:
+            with open(COUNTER_FILE, 'r', encoding='utf-8') as f:
+                count = int(f.read().strip())
+        except Exception as e:
+            print(f"[计数器读取错误] {e}")
+    count += 1  # 每次启动时加 1
+    try:
+        with open(COUNTER_FILE, 'w', encoding='utf-8') as f:
+            f.write(str(count))
+    except Exception as e:
+        print(f"[计数器写入错误] {e}")
+    return count
+
+def perform_backup_on_startup():
+    """
+    在程序启动时执行两个备份：
+    1. 每次启动均做自动备份（类型：auto）。
+    2. 每打开五次程序时，再做一次周期备份（类型：periodic）。
+    """
+    # 自动备份
+    backup_database("auto")
+    # 更新计数器，并判断是否达到周期条件
+    count = update_backup_counter()
+    print(f"[启动计数] 当前启动次数：{count}")
+    if count % 5 == 0:
+        backup_database("periodic")
+
+perform_backup_on_startup()
 # 创建主窗口
 app = QApplication(sys.argv)
 window = QWidget()
@@ -117,6 +182,8 @@ def open_product_management_window():
     except Exception as e:
         print(f"打开产品管理窗口时发生错误：{e}")
         QMessageBox.critical(None, "错误", f"打开产品管理窗口时发生错误：{e}")
+
+
 
 # 设置主布局
 window.setLayout(layout_main)

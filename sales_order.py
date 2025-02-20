@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox, QListWidget, QAbstractItemView, QListWidgetItem
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QInputDialog
 import datetime
 from data import (
     sales_orders, save_sales_order_to_db, delete_sales_order_from_db,
@@ -12,13 +13,14 @@ from data import (
 )
 from data import get_purchase_order_by_product_id
 import re
+from data import get_inventory_item
 
 class SalesOrderWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("销售订单管理")
         self.setGeometry(200, 200, 1000, 600)
-
+        self.last_deleted_order = None  # 用于保存上次删除的订单
         self.layout_main = QVBoxLayout()
 
         self.layout_inputs = QGridLayout()
@@ -38,9 +40,14 @@ class SalesOrderWindow(QWidget):
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if field_name == 'Product_ID':
                 entry = QComboBox()
-                product_ids = self.get_all_product_ids()
-                product_ids.insert(0, '')
-                entry.addItems(product_ids)
+                entry.setEditable(True)  # 设置为可编辑
+                # 获取完整的产品编号列表，并保存为成员变量
+                self.full_product_ids = self.get_all_product_ids()
+                # 添加空项以及全部产品编号
+                entry.addItem('')
+                entry.addItems(self.full_product_ids)
+                # 连接下拉框文本变化信号，进行模糊搜索过滤
+                entry.lineEdit().textChanged.connect(self.filter_product_ids)
                 entry.currentIndexChanged.connect(self.on_product_id_changed)
             elif field_name == 'Order_Nb':
                 entry = QListWidget()
@@ -75,10 +82,13 @@ class SalesOrderWindow(QWidget):
         self.button_update.clicked.connect(self.update_sales_order)
         self.button_delete = QPushButton("删除销售订单")
         self.button_delete.clicked.connect(self.delete_sales_order)
+        self.button_undo_delete = QPushButton("撤销删除")
+        self.button_undo_delete.clicked.connect(self.undo_last_deletion)
 
         layout_buttons.addWidget(self.button_add)
         layout_buttons.addWidget(self.button_update)
         layout_buttons.addWidget(self.button_delete)
+        layout_buttons.addWidget(self.button_undo_delete)
         self.layout_main.addLayout(layout_buttons)
 
         # 增加排序和过滤区域
@@ -138,6 +148,49 @@ class SalesOrderWindow(QWidget):
 
         # 初始化
         self.on_product_id_changed()
+
+    import re
+
+    import re
+
+    def filter_product_ids(self, text):
+        """
+        根据用户输入的 text 对产品编号进行模糊匹配，并更新下拉列表显示的内容，
+        支持使用 '*' 作为通配符进行匹配。匹配方式为只要产品编号中含有符合模式的子串即可匹配。
+        """
+        product_combo: QComboBox = self.entries['Product_ID']
+        # 阻塞 QLineEdit 信号，避免递归触发
+        product_combo.lineEdit().blockSignals(True)
+        
+        current_text = text
+        product_combo.clear()
+        product_combo.addItem('')  # 保留空选项
+
+        if '*' in current_text:
+            # 将输入文本转换为正则表达式模式
+            # 使用 re.escape 对普通字符进行转义，然后将转义后的 '*' 替换为 '.*'
+            # 不加锚点，这样只匹配产品编号中任意位置的匹配项
+            pattern = re.escape(current_text).replace(r'\*', '.*')
+            regex = re.compile(pattern, re.IGNORECASE)
+            filtered_ids = [pid for pid in self.full_product_ids if regex.search(pid)]
+        else:
+            # 普通的包含匹配（忽略大小写）
+            filtered_ids = [pid for pid in self.full_product_ids if current_text.lower() in pid.lower()]
+
+        product_combo.addItems(filtered_ids)
+        
+        # 恢复用户输入的文本和光标位置
+        product_combo.lineEdit().setText(current_text)
+        product_combo.lineEdit().setCursorPosition(len(current_text))
+        
+        # 恢复 QLineEdit 信号
+        product_combo.lineEdit().blockSignals(False)
+        
+        # 更新产品编号变更后的相关逻辑
+        self.on_product_id_changed()
+
+
+
 
     def on_item_changed(self, item):
         column = item.column()
@@ -255,8 +308,7 @@ class SalesOrderWindow(QWidget):
             self.update_available_stock()
 
     def add_sales_order(self):
-        # 原有代码不变
-        # ...
+
         try:
             new_order = {}
             for field_name, entry in self.entries.items():
@@ -272,6 +324,12 @@ class SalesOrderWindow(QWidget):
                 else:
                     value = entry.text().strip()
                 new_order[field_name] = value
+
+            # 检查销售订单号是否重复
+            sales_id = new_order.get('Sales_ID', '')
+            if any(o['Sales_ID'] == sales_id for o in sales_orders):
+                QMessageBox.warning(self, "添加失败", f"销售订单号 {sales_id} 已存在！")
+                return
 
             new_order['Order_Date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             new_order['Shipped_Date'] = ''
@@ -329,7 +387,7 @@ class SalesOrderWindow(QWidget):
                         sale_date=new_order['Order_Date'],
                         sales_orders=new_order['Sales_ID']
                     )
-                    deduction_details.append({'Order_Nb':order_nb,'Deduct_CS':deduct_cs})
+                    deduction_details.append({'Order_Nb': order_nb, 'Deduct_CS': deduct_cs})
                     total_amount += deduct_cs * btl_per_cs_order * price_per_bottle
                     total_btl += deduct_cs * btl_per_cs_order
                     remaining_cs_to_sell = 0
@@ -349,7 +407,7 @@ class SalesOrderWindow(QWidget):
                         sale_date=new_order['Order_Date'],
                         sales_orders=new_order['Sales_ID']
                     )
-                    deduction_details.append({'Order_Nb':order_nb,'Deduct_CS':deduct_cs})
+                    deduction_details.append({'Order_Nb': order_nb, 'Deduct_CS': deduct_cs})
                     total_amount += deduct_cs * btl_per_cs_order * price_per_bottle
                     total_btl += deduct_cs * btl_per_cs_order
                     remaining_cs_to_sell -= deduct_cs
@@ -372,28 +430,105 @@ class SalesOrderWindow(QWidget):
         print("功能开发中")
 
     def delete_sales_order(self):
+        """
+        通过输入销售订单号删除订单，一次只能输入一个。
+        删除时调用 restore_inventory 将扣减的库存恢复，
+        并将删除的订单保存到 self.last_deleted_order 中，便于撤销删除。
+        """
+        order_id, ok = QInputDialog.getText(self, "删除销售订单", "请输入要删除的销售订单号：")
+        if not ok or not order_id.strip():
+            return
+
+        order_id = order_id.strip()
+        # 如果输入中包含逗号或者空格，认为用户输入了多个订单号
+        if ',' in order_id or ' ' in order_id:
+            QMessageBox.warning(self, "删除错误", "一次只能输入一个销售订单号！")
+            return
+
+        # 在销售订单列表中查找对应订单
+        order = next((o for o in sales_orders if o['Sales_ID'] == order_id), None)
+        if not order:
+            QMessageBox.warning(self, "删除错误", f"找不到销售订单号：{order_id}")
+            return
+
         try:
-            selected_rows = self.sales_order_table.selectionModel().selectedRows()
-            if not selected_rows:
-                QMessageBox.warning(self, "删除错误", "请先选择要删除的销售订单！")
-                return
-
-            for index in selected_rows:
-                row = index.row()
-                fs_orders = self.get_filtered_and_sorted_sales_orders()
-                order = fs_orders[row]
-                sales_id = order['Sales_ID']
-                if order:
-                    restore_inventory(order)
-                    sales_orders.remove(order)
-                    delete_sales_order_from_db(sales_id)
-
+            # 先恢复库存，即将订单中扣减的库存返还
+            restore_inventory(order)
+            # 删除订单：从内存和数据库中移除
+            sales_orders.remove(order)
+            delete_sales_order_from_db(order_id)
+            # 保存删除的订单信息，便于撤销删除
+            self.last_deleted_order = order.copy()
             self.update_sales_order_table()
-            QMessageBox.information(self, "成功", "选中的销售订单已删除。")
-
+            QMessageBox.information(self, "成功", f"销售订单 {order_id} 已删除。")
         except Exception as e:
             print(f"删除销售订单时发生错误：{e}")
             QMessageBox.critical(self, "错误", f"删除销售订单时发生错误：{e}")
+
+    def reapply_inventory_deduction(self, order):
+        """
+        根据订单中的扣减详情，重新扣减库存，
+        实现撤销删除后恢复销售订单时的库存扣减操作。
+        """
+        product_id = order.get('Product_ID')
+        order_date = order.get('Order_Date')
+        sales_id = order.get('Sales_ID')
+        deduction_details = order.get('Deduction_Details', [])
+        if not deduction_details:
+            # 如果订单中没有扣减详情，不做处理
+            return
+
+        for deduction in deduction_details:
+            order_nb = deduction.get('Order_Nb')
+            deduct_cs = deduction.get('Deduct_CS', 0)
+            # 查找对应的库存记录
+            inventory_item = get_inventory_item(product_id, order_nb)
+            if not inventory_item:
+                # 如果找不到库存记录，则提示或跳过
+                print(f"找不到库存记录，产品ID: {product_id}, 订单号: {order_nb}")
+                continue
+            btl_per_cs = int(inventory_item.get('BTL PER CS', 0))
+            arrival_date = inventory_item.get('Arrival_Date')
+            creation_date = inventory_item.get('Creation_Date')
+            product_name = inventory_item.get('Product_Name')
+            sku_cls = inventory_item.get('SKU_CLS')
+            # 重新扣减库存，即库存变化量为负的扣减数量
+            update_inventory(
+                product_id,
+                order_nb,
+                -deduct_cs,  # 负数表示扣减库存
+                arrival_date,
+                creation_date,
+                product_name,
+                sku_cls,
+                btl_per_cs,
+                operation_type='sales',
+                sale_date=order_date,
+                sales_orders=sales_id
+            )
+
+    def undo_last_deletion(self):
+        """
+        撤销上一次删除的销售订单：
+        1. 将订单恢复到内存和数据库中。
+        2. 根据订单的扣减详情重新扣减库存（撤销恢复库存）。
+        """
+        if not self.last_deleted_order:
+            QMessageBox.warning(self, "撤销错误", "没有可撤销的删除操作。")
+            return
+        try:
+            order = self.last_deleted_order
+            # 将订单恢复到内存中，并保存到数据库
+            sales_orders.append(order)
+            save_sales_order_to_db(order)
+            # 重新扣减库存：撤销删除时，需要重新扣减与该订单对应的库存
+            self.reapply_inventory_deduction(order)
+            self.last_deleted_order = None  # 清除上次删除记录
+            self.update_sales_order_table()
+            QMessageBox.information(self, "成功", f"销售订单 {order['Sales_ID']} 已恢复，库存已更新。")
+        except Exception as e:
+            print(f"恢复销售订单时发生错误：{e}")
+            QMessageBox.critical(self, "错误", f"恢复销售订单时发生错误：{e}")
 
     def get_filtered_and_sorted_sales_orders(self):
         filtered = sales_orders.copy()

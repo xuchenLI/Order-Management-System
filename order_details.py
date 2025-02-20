@@ -25,7 +25,7 @@ class OrderDetailsWindow(QWidget):
         super().__init__()
         self.setWindowTitle("采购订单管理")
         self.setGeometry(200, 200, 1400, 700)
-
+        self.editing_in_progress = False
         self.layout_main = QVBoxLayout()
 
         # 输入区域
@@ -198,21 +198,21 @@ class OrderDetailsWindow(QWidget):
         self.order_table = QTableWidget()
         self.order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.order_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-        self.order_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        # 将编辑触发模式设为双击或 F2 编辑，而非完全只读
+        self.order_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed)
         self.order_table.setColumnCount(len(display_fields))
         self.order_table.setHorizontalHeaderLabels([label_text for label_text, field_name in display_fields])
         self.order_table.verticalHeader().setVisible(False)
         self.order_table.horizontalHeader().setStretchLastSection(True)
         self.order_table.setWordWrap(True)
         self.order_table.resizeColumnsToContents()
-
-        # 连接订单表格的选择信号到处理函数
+        # 连接订单表格的选择信号
         self.order_table.selectionModel().selectionChanged.connect(self.on_order_selected)
-
+        # 连接编辑完成信号
+        self.order_table.itemChanged.connect(self.on_item_changed)
         self.layout_main.addWidget(self.order_table)
 
         self.setLayout(self.layout_main)
-
         self.update_order_table()
 
     def get_filtered_and_sorted_purchase_orders(self):
@@ -769,17 +769,75 @@ class OrderDetailsWindow(QWidget):
 
 
     def update_order_table(self):
-        # 更新订单表格显示
+        """
+        更新订单表格显示，根据过滤排序后的订单列表更新各单元格，
+        并针对价格计算相关字段设置为可编辑，其它字段设置为只读。
+        """
         display_fields = [field for field in db_fields]
         filtered_sorted_orders = self.get_filtered_and_sorted_purchase_orders()
 
+        # 在更新前屏蔽 itemChanged 信号，防止内部修改触发信号
+        self.order_table.blockSignals(True)
         self.order_table.setRowCount(0)
         self.order_table.setRowCount(len(filtered_sorted_orders))
+
+        # 定义哪些字段允许手动编辑
+        editable_fields = {"INVOICE PRICE", "INVOICE CS", "WHOLESALE BTL", "WHOLESALE CS",
+                           "TOTAL Freight", "PROFIT PER BT", "PROFIT PER CS", "PROFIT TOTAL",
+                           "QUANTITY BTL", "TOTAL AMOUNT", "TOTAL AMOUNT EURO", "REMARKS"}
+
         for row, order in enumerate(filtered_sorted_orders):
             for col, (label_text, field_name) in enumerate(display_fields):
                 value = order.get(field_name, "")
                 item = QTableWidgetItem(str(value))
+                # 如果该字段在 editable_fields 中，则允许编辑，否则设置只读
+                if field_name in editable_fields:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.order_table.setItem(row, col, item)
+        self.order_table.blockSignals(False)
+
+    def on_item_changed(self, item):
+        """
+        当用户修改订单表格中某个单元格后，更新对应订单的数据，并保存到数据库。
+        为避免内部更新引发递归调用，使用 editing_in_progress 标志。
+        """
+        if self.editing_in_progress:
+            return
+
+        try:
+            self.editing_in_progress = True
+            col = item.column()
+            # 根据 display_fields 获取字段名
+            display_fields = [field for field in db_fields]
+            field_name = display_fields[col][1]  # display_fields 元素为 (label_text, field_name)
+            # 只对可编辑字段进行处理
+            editable_fields = {"INVOICE PRICE", "INVOICE CS", "WHOLESALE BTL", "WHOLESALE CS",
+                               "TOTAL Freight", "PROFIT PER BT", "PROFIT PER CS", "PROFIT TOTAL",
+                               "QUANTITY BTL", "TOTAL AMOUNT", "TOTAL AMOUNT EURO", "REMARKS"}
+            if field_name not in editable_fields:
+                return
+
+            # 获取当前修改所在的行
+            row = item.row()
+            # 获取当前显示的订单列表（经过过滤排序后的列表）
+            filtered_sorted_orders = self.get_filtered_and_sorted_purchase_orders()
+            if row >= len(filtered_sorted_orders):
+                return
+
+            # 修改对应订单中的字段
+            order = filtered_sorted_orders[row]
+            new_value = item.text().strip()
+            order[field_name] = new_value
+            # 调用保存到数据库的函数（更新时可直接调用 save_purchase_order_to_db）
+            save_purchase_order_to_db(order)
+            # 若需要，可以发射数据变化信号刷新界面
+            data_manager.data_changed.emit()
+        except Exception as e:
+            print(f"更新订单单元格时发生错误：{e}")
+        finally:
+            self.editing_in_progress = False
 
     def showEvent(self, event):
         super().showEvent(event)
