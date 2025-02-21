@@ -3,8 +3,9 @@
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox, QFileDialog
+    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox, QFileDialog, QListWidget, QAbstractItemView, QListWidgetItem, QApplication
 )
+from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtCore import Qt
 import pandas as pd
 from openpyxl import load_workbook
@@ -18,7 +19,7 @@ from data import (
 )
 from price_calculator import open_price_calculator
 import json
-import re
+import datetime, re
 
 class OrderDetailsWindow(QWidget):
     def __init__(self):
@@ -196,8 +197,8 @@ class OrderDetailsWindow(QWidget):
         # 订单列表显示区域
         display_fields = [field for field in db_fields]
         self.order_table = QTableWidget()
-        self.order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.order_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
+        self.order_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         # 将编辑触发模式设为双击或 F2 编辑，而非完全只读
         self.order_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed)
         self.order_table.setColumnCount(len(display_fields))
@@ -211,9 +212,28 @@ class OrderDetailsWindow(QWidget):
         # 连接编辑完成信号
         self.order_table.itemChanged.connect(self.on_item_changed)
         self.layout_main.addWidget(self.order_table)
-
+        # 添加复制快捷键（Ctrl+C）和 ESC 快捷键取消选择
+        self.copy_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Copy), self.order_table)
+        self.copy_shortcut.activated.connect(self.copySelectedCells)
+        self.clear_selection_shortcut = QShortcut(QKeySequence("Escape"), self.order_table)
+        self.clear_selection_shortcut.activated.connect(lambda: self.order_table.clearSelection())
         self.setLayout(self.layout_main)
         self.update_order_table()
+
+    def copySelectedCells(self):
+        selected_ranges = self.order_table.selectedRanges()
+        if not selected_ranges:
+            return
+        copied_text = ""
+        for selection in selected_ranges:
+            for row in range(selection.topRow(), selection.bottomRow() + 1):
+                row_data = []
+                for col in range(selection.leftColumn(), selection.rightColumn() + 1):
+                    item = self.order_table.item(row, col)
+                    row_data.append(item.text() if item else "")
+                copied_text += "\t".join(row_data) + "\n"
+        clipboard = QApplication.clipboard()
+        clipboard.setText(copied_text)
 
     def get_filtered_and_sorted_purchase_orders(self):
         filtered_orders = purchase_orders.copy()
@@ -283,10 +303,9 @@ class OrderDetailsWindow(QWidget):
 
     def on_order_selected(self, selected, deselected):
         try:
-            indexes = self.order_table.selectionModel().selectedRows()
+            indexes = self.order_table.selectionModel().selectedIndexes()
             if indexes:
-                index = indexes[0]
-                row = index.row()
+                row = indexes[0].row()  # 取第一个选中单元格所在的行
                 fs_orders = self.get_filtered_and_sorted_purchase_orders()
                 order = fs_orders[row]
                 for field_name, entry in self.entries.items():

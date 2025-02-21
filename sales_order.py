@@ -2,8 +2,9 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox, QListWidget, QAbstractItemView, QListWidgetItem
+    QPushButton, QLabel, QLineEdit, QMessageBox, QGridLayout, QComboBox, QListWidget, QAbstractItemView, QListWidgetItem, QApplication
 )
+from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QInputDialog
 import datetime
@@ -14,6 +15,8 @@ from data import (
 from data import get_purchase_order_by_product_id
 import re
 from data import get_inventory_item
+from data import load_sales_orders_from_db, data_manager
+
 
 class SalesOrderWindow(QWidget):
     def __init__(self):
@@ -118,6 +121,7 @@ class SalesOrderWindow(QWidget):
             ('客户编号', 'Customer_ID'),
             ('销售订单号', 'Sales_ID'),
             ('采购订单号', 'Order_Nb'),
+            ('SKU CLS', 'SKU_CLS'),
             ('产品编号', 'Product_ID'),
             ('产品名称', 'Product_Name'),
             ('销售箱数', 'Quantity_CS_Sold'),
@@ -129,7 +133,9 @@ class SalesOrderWindow(QWidget):
             ('备注', 'Remarks')
         ]
         self.sales_order_table = QTableWidget()
-        self.sales_order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        # 设置表格为单元格选择并允许拖动选择多个单元格
+        self.sales_order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
+        self.sales_order_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.sales_order_table.setColumnCount(len(self.table_fields))
         self.sales_order_table.setHorizontalHeaderLabels([label_text for label_text, field_name in self.table_fields])
         self.sales_order_table.verticalHeader().setVisible(False)
@@ -137,21 +143,42 @@ class SalesOrderWindow(QWidget):
         self.sales_order_table.setWordWrap(True)
         self.sales_order_table.resizeColumnsToContents()
         self.sales_order_table.itemChanged.connect(self.on_item_changed)
-
         self.sales_order_table.selectionModel().selectionChanged.connect(self.on_order_selected)
         self.layout_main.addWidget(self.sales_order_table)
+
+        # 添加复制快捷键：在表格初始化完成之后
+        self.copy_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Copy), self.sales_order_table)
+        self.copy_shortcut.activated.connect(self.copySelectedCells)
+        self.clear_selection_shortcut = QShortcut(QKeySequence("Escape"), self.sales_order_table)
+        self.clear_selection_shortcut.activated.connect(lambda: self.sales_order_table.clearSelection())
+
+
         self.setLayout(self.layout_main)
 
+        # 加载订单数据并更新表格
         load_sales_orders_from_db()
         self.update_sales_order_table()
         data_manager.inventory_changed.connect(self.on_inventory_changed)
 
-        # 初始化
+        # 初始化产品编号相关操作
         self.on_product_id_changed()
 
-    import re
+    # 实现复制选中单元格内容到剪贴板的函数
+    def copySelectedCells(self):
+        selected_ranges = self.sales_order_table.selectedRanges()
+        if not selected_ranges:
+            return
+        copied_text = ""
+        for selection in selected_ranges:
+            for row in range(selection.topRow(), selection.bottomRow() + 1):
+                row_data = []
+                for col in range(selection.leftColumn(), selection.rightColumn() + 1):
+                    item = self.sales_order_table.item(row, col)
+                    row_data.append(item.text() if item else "")
+                copied_text += "\t".join(row_data) + "\n"
+        clipboard = QApplication.clipboard()
+        clipboard.setText(copied_text)
 
-    import re
 
     def filter_product_ids(self, text):
         """
@@ -284,28 +311,29 @@ class SalesOrderWindow(QWidget):
         self.update_available_stock()
 
     def on_order_selected(self, selected, deselected):
-        indexes = self.sales_order_table.selectionModel().selectedRows()
+        indexes = self.sales_order_table.selectionModel().selectedIndexes()
         if indexes:
-            index = indexes[0]
-            row = index.row()
+            # 取第一个选中单元格所在的行
+            row = indexes[0].row()
             fs_orders = self.get_filtered_and_sorted_sales_orders()
             order = fs_orders[row]
             for field_name, entry in self.entries.items():
                 if field_name == 'Order_Nb':
-                    order_nbs = order.get('Order_Nb','').split(',')
+                    order_nbs = order.get('Order_Nb', '').split(',')
                     entry.clearSelection()
                     for i in range(entry.count()):
                         item = entry.item(i)
                         if item.data(Qt.ItemDataRole.UserRole) in order_nbs:
                             item.setSelected(True)
                 elif field_name == 'Product_ID':
-                    idx = entry.findText(order.get('Product_ID',''))
-                    if idx >=0:
+                    idx = entry.findText(order.get('Product_ID', ''))
+                    if idx >= 0:
                         entry.setCurrentIndex(idx)
                 else:
                     value = order.get(field_name, '')
                     entry.setText(str(value))
             self.update_available_stock()
+
 
     def add_sales_order(self):
 
@@ -589,12 +617,18 @@ class SalesOrderWindow(QWidget):
         self.sales_order_table.setRowCount(len(filtered_sorted_orders))
         for row, order in enumerate(filtered_sorted_orders):
             for col, (label_text, field_name) in enumerate(self.table_fields):
-                value = order.get(field_name, "")
+                if field_name == 'SKU_CLS':
+                    # 根据订单中的产品编号，从对应的采购订单中提取 SKU CLS
+                    purchase_order = get_purchase_order_by_product_id(order.get("Product_ID", ""))
+                    value = purchase_order.get("SKU CLS", "") if purchase_order else ""
+                else:
+                    value = order.get(field_name, "")
                 item = QTableWidgetItem(str(value))
                 if field_name == 'Remarks':
                     item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
                 else:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.sales_order_table.setItem(row, col, item)
+
 
         self.sales_order_table.blockSignals(False)

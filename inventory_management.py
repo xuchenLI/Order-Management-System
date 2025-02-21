@@ -3,9 +3,10 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QLabel,
     QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QComboBox,
-    QHeaderView, QMessageBox
+    QHeaderView, QMessageBox, QAbstractItemView, QApplication, QHeaderView
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QShortcut, QKeySequence
 from data import inventory, load_inventory_from_db, data_manager, save_inventory_to_db, purchase_orders, get_purchase_order_by_nb
 import datetime
 import re
@@ -109,7 +110,8 @@ class InventoryManagementWindow(QWidget):
 
         # 明细库存列表
         self.detail_inventory_table = QTableWidget()
-        self.detail_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.detail_inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
+        self.detail_inventory_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.detail_inventory_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.detail_inventory_table.setColumnCount(14)
         self.detail_inventory_table.setHorizontalHeaderLabels([
@@ -123,6 +125,13 @@ class InventoryManagementWindow(QWidget):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
 
         self.layout_main.addWidget(self.detail_inventory_table)
+        #添加复制快捷键（如有需要）
+        self.copy_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Copy), self.detail_inventory_table)
+        self.copy_shortcut.activated.connect(self.copySelectedCells)
+        
+        # 添加 ESC 快捷键：按下 ESC 后清除表格中所有选中单元格
+        self.clear_selection_shortcut = QShortcut(QKeySequence("Escape"), self.detail_inventory_table)
+        self.clear_selection_shortcut.activated.connect(lambda: self.detail_inventory_table.clearSelection())
 
         # 总览标题
         total_label = QLabel("库存总览")
@@ -152,6 +161,7 @@ class InventoryManagementWindow(QWidget):
         self.detail_inventory_table.selectionModel().selectionChanged.connect(self.on_order_selected)
         # 连接数据变化信号到更新方法
         data_manager.inventory_changed.connect(self.on_inventory_changed)
+        
         # 加载库存数据
         load_inventory_from_db()
         self.update_inventory_tables()
@@ -159,19 +169,30 @@ class InventoryManagementWindow(QWidget):
     def on_inventory_changed(self):
         self.update_inventory_tables()
 
+    def copySelectedCells(self):
+        selected_ranges = self.detail_inventory_table.selectedRanges()
+        if not selected_ranges:
+            return
+        copied_text = ""
+        for selection in selected_ranges:
+            for row in range(selection.topRow(), selection.bottomRow() + 1):
+                row_data = []
+                for col in range(selection.leftColumn(), selection.rightColumn() + 1):
+                    item = self.detail_inventory_table.item(row, col)
+                    row_data.append(item.text() if item else "")
+                copied_text += "\t".join(row_data) + "\n"
+        clipboard = QApplication.clipboard()
+        clipboard.setText(copied_text)
+
     def on_order_selected(self, selected, deselected):
-        indexes = self.detail_inventory_table.selectionModel().selectedRows()
+        indexes = self.detail_inventory_table.selectionModel().selectedIndexes()
         if indexes:
-            index = indexes[0]
-            row = index.row()
-            # 获取选中的库存记录
-            product_id = self.detail_inventory_table.item(row, 3).text()
-            order_nb = self.detail_inventory_table.item(row, 1).text()
-            # 查找对应的库存项
+            row = indexes[0].row()
+            product_id = self.detail_inventory_table.item(row, 3).text()  # 产品编号所在列
+            order_nb = self.detail_inventory_table.item(row, 1).text()    # 采购订单号所在列
             inventory_item = next((item for item in inventory if item['Product_ID'] == product_id and item['Order_Nb'] == order_nb), None)
             if inventory_item:
                 self.selected_inventory_item = inventory_item
-                # 填充输入框
                 self.entry_arrival_date.setText(inventory_item.get('Arrival_Date', ''))
                 self.entry_pickup_date.setText(inventory_item.get('Pick_up_Date', ''))
             else:
@@ -182,6 +203,7 @@ class InventoryManagementWindow(QWidget):
             self.selected_inventory_item = None
             self.entry_arrival_date.clear()
             self.entry_pickup_date.clear()
+
 
     def update_inventory_record(self):
         if not self.selected_inventory_item:
