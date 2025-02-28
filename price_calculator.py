@@ -94,7 +94,7 @@ def calculate_and_display(order_nb, results_labels):
 
         # 计算其他价格
         INVOICE_PRICE, INVOICE_CS, CIF, TOTAL_Freight_CAD, Total_COGS = calculate_invoice_price(order)
-        WHOLESALE_BTL, WHOLESALE_CS = calculate_wholesale(order, INVOICE_CS)
+        WHOLESALE_BTL, WHOLESALE_CS = calculate_wholesale(order, INVOICE_CS, INVOICE_PRICE)
 
         # 计算 PROFIT PER BT、PROFIT PER CS 和 PROFIT TOTAL
         expected_profit = float(order.get('Expected Profit', 0))
@@ -198,7 +198,7 @@ def calculate_invoice_price(order):
         print(f"计算发票价格时发生错误：{e}")
         return None, None, None, None, None
 
-def calculate_wholesale(order, INVOICE_CS):
+def calculate_wholesale(order, INVOICE_CS, INVOICE_PRICE):
     try:
         BTL_PER_CS = int(order.get('BTL PER CS', 0))
         SIZE = float(order.get('SIZE', 0))
@@ -212,12 +212,15 @@ def calculate_wholesale(order, INVOICE_CS):
 
         # MARKUP RATE
         if ALC <= 16:
-            MARKUP_RATE = 3.91
+            MARKUP_RATE = 4.11
         else:
-            MARKUP_RATE = 6.56
-
+            MARKUP_RATE = 6.88
+        # 计算每升价格（元/L）
+        price_per_l = (INVOICE_PRICE / (SIZE * 1000)) * 1000
+        MARKUP_ADDITIONAL = (max(0, min(price_per_l, 20) - 15) * 0.05 + max(0, min(price_per_l, 25) - 20) * 0.10 + max(0, price_per_l - 25) * 0.15) * ((SIZE * 1000) / 1000) 
+        FINAL_MARKUP = MARKUP_RATE + MARKUP_ADDITIONAL
         # TOTAL COST CASE Calculation
-        PLUS_MARKUP = SIZE * BTL_PER_CS * MARKUP_RATE
+        PLUS_MARKUP = SIZE * BTL_PER_CS * FINAL_MARKUP
         PLUS_RECYCLE = math.floor(config_params['WHLSE']['RECYCLE RATE'] * BTL_PER_CS * 1000) / 1000
         PLUS_EXCISE = calculate_excise_rate(ALC) * SIZE * BTL_PER_CS
 
@@ -243,7 +246,7 @@ def calculate_excise_rate(ALC):
     elif 0.012 < ALC <= 0.07:
         return 0.337
     elif 0.07 < ALC <= 0.229:
-        return 0.702
+        return 0.73
     else:
         QMessageBox.warning(None, "警告", "请确认酒精度是否正确")
         return 0

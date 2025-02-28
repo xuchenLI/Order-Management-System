@@ -356,6 +356,8 @@ class InventoryManagementWindow(QWidget):
         total_inventory = {}
         for product in sorted_inventory:
             product_id = product['Product_ID']
+            # 使用小写形式作为键
+            product_key = product_id.lower()
             order_nb = product.get('Order_Nb', '')
             sales_order = product.get('Sales_Orders', '')
             sku_cls = product.get('SKU_CLS', '')
@@ -364,9 +366,9 @@ class InventoryManagementWindow(QWidget):
             btl_per_cs = int(product.get('BTL PER CS', 0))
             current_stock_btl = current_stock_cs * btl_per_cs
 
-            if product_id not in total_inventory:
-                total_inventory[product_id] = {
-                    'Product_ID': product_id,
+            if product_key not in total_inventory:
+                total_inventory[product_key] = {
+                    'Product_ID': product_id,  # 保留首次遇到的原始格式用于显示
                     'Order_Nb_Set': set([order_nb]),
                     'Sales_Order_Set': set(),
                     'SKU_CLS': sku_cls,
@@ -375,12 +377,12 @@ class InventoryManagementWindow(QWidget):
                     'Current_Stock_BTL': current_stock_btl
                 }
             else:
-                total_inventory[product_id]['Order_Nb_Set'].add(order_nb)
-                total_inventory[product_id]['Current_Stock_CS'] += current_stock_cs
-                total_inventory[product_id]['Current_Stock_BTL'] += current_stock_btl
+                total_inventory[product_key]['Order_Nb_Set'].add(order_nb)
+                total_inventory[product_key]['Current_Stock_CS'] += current_stock_cs
+                total_inventory[product_key]['Current_Stock_BTL'] += current_stock_btl
 
             if sales_order:
-                total_inventory[product_id]['Sales_Order_Set'].update([s.strip() for s in sales_order.split(',')])
+                total_inventory[product_key]['Sales_Order_Set'].update([s.strip() for s in sales_order.split(',')])
 
         total_inventory_list = list(total_inventory.values())
 

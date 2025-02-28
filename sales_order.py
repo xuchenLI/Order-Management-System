@@ -298,10 +298,14 @@ class SalesOrderWindow(QWidget):
         return order_list
 
     def get_all_product_ids(self):
-        product_ids = set()
-        for item_ in inventory:
-            product_ids.add(item_['Product_ID'])
-        return sorted(list(product_ids))
+        product_dict = {}
+        for item in inventory:
+            pid = item['Product_ID']
+            key = pid.lower()  # 归一化为小写作为键
+            if key not in product_dict:
+                product_dict[key] = pid  # 保留原始形式（或你想显示的格式）
+        # 返回时按照小写排序
+        return sorted(list(product_dict.values()), key=lambda x: x.lower())
 
     def on_product_id_changed(self):
         product_id = self.entries['Product_ID'].currentText()

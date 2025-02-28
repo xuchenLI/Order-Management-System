@@ -18,10 +18,11 @@ from order_details import OrderDetailsWindow
 from inventory_management import InventoryManagementWindow
 from sales_order import SalesOrderWindow
 from product_management import ProductManagementWindow  
+from financial_management import FinancialManagementWindow
 
 # 配置数据库和备份文件夹路径
-DB_PATH = r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db'
-BACKUP_FOLDER = r'C:\Users\mosho\OneDrive\Order_Management_Tool\backups'
+DB_PATH = r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db'
+BACKUP_FOLDER = r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\backups'
 COUNTER_FILE = os.path.join(BACKUP_FOLDER, 'backup_counter.txt')
 def backup_database(backup_type):
     if not os.path.exists(BACKUP_FOLDER):
@@ -116,11 +117,15 @@ button_product_management.clicked.connect(lambda: open_product_management_window
 button_file_compare_tool = QPushButton("文件对比工具")
 button_file_compare_tool.clicked.connect(lambda: file_compare.open_file_compare_tool())
 
+button_financial_management = QPushButton("财务管理")
+button_financial_management.clicked.connect(lambda: open_financial_management_window())
+
 layout_buttons.addWidget(button_order_details)
 layout_buttons.addWidget(button_sales_order)
 layout_buttons.addWidget(button_inventory_management)
 layout_buttons.addWidget(button_product_management)
 layout_buttons.addWidget(button_file_compare_tool)
+layout_buttons.addWidget(button_financial_management)
 
 layout_main.addLayout(layout_buttons)
 
@@ -129,7 +134,8 @@ layout_main.addLayout(layout_buttons)
 order_details_window = None
 sales_order_window = None
 inventory_management_window = None
-product_management_window = None  # 新增
+product_management_window = None  
+financial_management_window = None
 
 # 打开采购订单窗口
 def open_order_details_window():
@@ -183,7 +189,16 @@ def open_product_management_window():
         print(f"打开产品管理窗口时发生错误：{e}")
         QMessageBox.critical(None, "错误", f"打开产品管理窗口时发生错误：{e}")
 
-
+def open_financial_management_window():
+    global financial_management_window
+    try:
+        if financial_management_window is None:
+            financial_management_window = FinancialManagementWindow()
+        else:
+            financial_management_window.calculate_financial_metrics()
+        financial_management_window.show()
+    except Exception as e:
+        QMessageBox.critical(None, "错误", f"打开财务管理窗口时发生错误：{e}")
 
 # 设置主布局
 window.setLayout(layout_main)
