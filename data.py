@@ -567,3 +567,83 @@ def check_and_add_new_product(order):
                 inconsistencies.append(field)
         if inconsistencies:
             QMessageBox.warning(None, "产品信息不一致", f"产品 {sku_cls} 的以下信息与产品列表不一致：{', '.join(inconsistencies)}。请检查。")
+
+def cascade_update_purchase_order(old_order_nb, new_order_nb, new_order_data=None):
+    """
+    将采购订单号从 old_order_nb 更新为 new_order_nb，并级联更新所有相关记录。
+    参数:
+      old_order_nb: 旧的采购订单号
+      new_order_nb: 新的采购订单号
+      new_order_data: 其他需要同时更新的字段（可选）
+    """
+    # 1. 更新采购订单数据（内存中和数据库）
+    for order in purchase_orders:
+        if order.get("Order Nb") == old_order_nb:
+            order["Order Nb"] = new_order_nb
+            if new_order_data:
+                order.update(new_order_data)
+            save_purchase_order_to_db(order)
+            break
+
+    # 2. 级联更新销售订单中的引用
+    for s_order in sales_orders:
+        # 如果销售订单的主订单号字段等于旧订单号，更新为新订单号
+        if s_order.get("Order_Nb", "") == old_order_nb:
+            s_order["Order_Nb"] = new_order_nb
+        # 更新销售订单中扣减详情里引用的订单号
+        for deduction in s_order.get("Deduction_Details", []):
+            if deduction.get("Order_Nb") == old_order_nb:
+                deduction["Order_Nb"] = new_order_nb
+        save_sales_order_to_db(s_order)
+    
+    # 3. 级联更新库存记录中的订单号
+    for item in inventory:
+        if item.get("Order_Nb", "") == old_order_nb:
+            item["Order_Nb"] = new_order_nb
+            save_inventory_to_db(item)
+
+    # 发射信号通知界面刷新
+    data_manager.data_changed.emit()
+    data_manager.inventory_changed.emit()
+
+
+def can_delete_purchase_order(order_nb):
+    """
+    检查是否允许删除采购订单：
+    如果有销售订单（包括扣减详情中引用）使用该订单号，则返回 False。
+    """
+    for s_order in sales_orders:
+        if s_order.get("Order_Nb", "") == order_nb:
+            return False
+        for deduction in s_order.get("Deduction_Details", []):
+            if deduction.get("Order_Nb") == order_nb:
+                return False
+    return True
+
+
+def delete_purchase_order_with_check(order_nb):
+    """
+    删除采购订单前先检查关联的销售订单：
+      - 若存在销售订单引用该订单，则弹出提示并阻止删除。
+      - 若不存在关联销售订单，则执行删除，并对库存记录进行级联更新。
+    """
+    if not can_delete_purchase_order(order_nb):
+        QMessageBox.warning(None, "删除错误", f"采购订单 {order_nb} 存在关联的销售订单，无法删除！")
+        return
+
+    # 从内存中删除采购订单
+    global purchase_orders
+    purchase_orders = [order for order in purchase_orders if order.get("Order Nb") != order_nb]
+    # 从数据库中删除
+    delete_purchase_order_from_db(order_nb)
+
+    # 对库存记录进行级联处理：
+    # 如果库存记录仍引用该订单号，将其标记为“已删除订单: 原订单号”
+    for item in inventory:
+        if item.get("Order_Nb", "") == order_nb:
+            item["Order_Nb"] = f"已删除订单: {order_nb}"
+            save_inventory_to_db(item)
+
+    data_manager.data_changed.emit()
+    data_manager.inventory_changed.emit()
+    QMessageBox.information(None, "成功", f"采购订单 {order_nb} 已删除。")

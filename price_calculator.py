@@ -25,7 +25,7 @@ config_params = {
         'Total Freight CAD': 35
     },
     'WHLSE': {
-        'RECYCLE RATE': 0.09,
+        'RECYCLE RATE': 0.07,
         'PLUS DUTY': 0
     }
 }
@@ -94,7 +94,7 @@ def calculate_and_display(order_nb, results_labels):
 
         # 计算其他价格
         INVOICE_PRICE, INVOICE_CS, CIF, TOTAL_Freight_CAD, Total_COGS = calculate_invoice_price(order)
-        WHOLESALE_BTL, WHOLESALE_CS = calculate_wholesale(order, INVOICE_CS, INVOICE_PRICE)
+        WHOLESALE_BTL, WHOLESALE_CS = calculate_wholesale(order, INVOICE_CS)
 
         # 计算 PROFIT PER BT、PROFIT PER CS 和 PROFIT TOTAL
         expected_profit = float(order.get('Expected Profit', 0))
@@ -198,7 +198,7 @@ def calculate_invoice_price(order):
         print(f"计算发票价格时发生错误：{e}")
         return None, None, None, None, None
 
-def calculate_wholesale(order, INVOICE_CS, INVOICE_PRICE):
+def calculate_wholesale(order, INVOICE_CS):
     try:
         BTL_PER_CS = int(order.get('BTL PER CS', 0))
         SIZE = float(order.get('SIZE', 0))
@@ -215,12 +215,12 @@ def calculate_wholesale(order, INVOICE_CS, INVOICE_PRICE):
             MARKUP_RATE = 4.11
         else:
             MARKUP_RATE = 6.88
-        # 计算每升价格（元/L）
-        price_per_l = (INVOICE_PRICE / (SIZE * 1000)) * 1000
-        MARKUP_ADDITIONAL = (max(0, min(price_per_l, 20) - 15) * 0.05 + max(0, min(price_per_l, 25) - 20) * 0.10 + max(0, price_per_l - 25) * 0.15) * ((SIZE * 1000) / 1000) 
-        FINAL_MARKUP = MARKUP_RATE + MARKUP_ADDITIONAL
+        # 计算markup加价部分
+        Value_per_Litre = INVOICE_CS / (SIZE * BTL_PER_CS)
+        Ad_Valorem_per_Litre = calculate_ad_valorem_per_litre(Value_per_Litre)
+        Total_Additional_Markup_on_High_Value_Wine = SIZE * BTL_PER_CS * Ad_Valorem_per_Litre
         # TOTAL COST CASE Calculation
-        PLUS_MARKUP = SIZE * BTL_PER_CS * FINAL_MARKUP
+        PLUS_MARKUP = (SIZE * BTL_PER_CS * MARKUP_RATE) + Total_Additional_Markup_on_High_Value_Wine
         PLUS_RECYCLE = math.floor(config_params['WHLSE']['RECYCLE RATE'] * BTL_PER_CS * 1000) / 1000
         PLUS_EXCISE = calculate_excise_rate(ALC) * SIZE * BTL_PER_CS
 
@@ -240,11 +240,21 @@ def calculate_wholesale(order, INVOICE_CS, INVOICE_PRICE):
         print(f"计算批发价格时发生错误：{e}")
         return None, None
 
+def calculate_ad_valorem_per_litre(value_per_litre):
+    if value_per_litre <= 15:
+        return 0
+    elif value_per_litre <= 20:
+        return (value_per_litre * 0.05) - 0.75
+    elif value_per_litre <= 25:
+        return (value_per_litre * 0.1) - 1.75
+    else:
+        return (value_per_litre * 0.15) - 3
+
 def calculate_excise_rate(ALC):
     if ALC <= 0.012:
         return 0.022
     elif 0.012 < ALC <= 0.07:
-        return 0.337
+        return 0.351
     elif 0.07 < ALC <= 0.229:
         return 0.73
     else:
