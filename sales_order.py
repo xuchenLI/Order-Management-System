@@ -10,13 +10,13 @@ from PyQt6.QtWidgets import QInputDialog
 import datetime
 from data import (
     sales_orders, save_sales_order_to_db, delete_sales_order_from_db,
-    load_sales_orders_from_db, get_btl_per_cs, restore_inventory, data_manager, inventory, update_inventory, get_inventory_info, purchase_orders
+    load_sales_orders_from_db, get_btl_per_cs, restore_inventory, data_manager, inventory, update_inventory, get_inventory_info, purchase_orders, get_purchase_order_by_nb, get_po_guid_for_inventory
 )
 from data import get_purchase_order_by_product_id
 import re
 from data import get_inventory_item
 from data import load_sales_orders_from_db, data_manager
-
+import uuid
 
 class SalesOrderWindow(QWidget):
     def __init__(self):
@@ -403,10 +403,11 @@ class SalesOrderWindow(QWidget):
                     continue
                 btl_per_cs_order = int(inventory_item['BTL PER CS'])
                 current_stock_cs = int(inventory_item['Current_Stock_CS'])
-
+                po_guid = get_po_guid_for_inventory(product_id, order_nb)
                 if remaining_cs_to_sell <= current_stock_cs:
                     deduct_cs = remaining_cs_to_sell
                     update_inventory(
+                        po_guid,
                         new_order['Product_ID'],
                         order_nb,
                         -deduct_cs,
@@ -427,6 +428,7 @@ class SalesOrderWindow(QWidget):
                 else:
                     deduct_cs = current_stock_cs
                     update_inventory(
+                        po_guid,
                         new_order['Product_ID'],
                         order_nb,
                         -deduct_cs,
@@ -447,7 +449,21 @@ class SalesOrderWindow(QWidget):
             new_order['Deduction_Details'] = deduction_details
             new_order['Total_Amount'] = total_amount
             new_order['Total_Quantity_BTL_Sold'] = total_btl
-
+            # ======= 新增 GUID 生成逻辑 =======
+            # 为销售订单生成自己的唯一标识 SO_GUID
+            new_order['SO_GUID'] = str(uuid.uuid4())
+            # 根据销售订单中的多个 Order_Nb 查找对应的采购订单记录，
+            # 并把所有采购订单的 PO_GUID 合并成逗号分隔的字符串
+            po_guid_list = []
+            for order_nb in selected_order_nbs:
+                associated_po = get_purchase_order_by_nb(order_nb)
+                if associated_po:
+                    po_guid = associated_po.get('PO_GUID', '')
+                    if po_guid:
+                        po_guid_list.append(po_guid)
+            # 将多个 PO_GUID 用逗号分隔保存
+            new_order['PO_GUID'] = ','.join(po_guid_list)
+            # =====================================
             sales_orders.append(new_order)
             save_sales_order_to_db(new_order)
             self.update_sales_order_table()
@@ -524,8 +540,10 @@ class SalesOrderWindow(QWidget):
             creation_date = inventory_item.get('Creation_Date')
             product_name = inventory_item.get('Product_Name')
             sku_cls = inventory_item.get('SKU_CLS')
+            po_guid = get_po_guid_for_inventory(product_id, order_nb)
             # 重新扣减库存，即库存变化量为负的扣减数量
             update_inventory(
+                po_guid,
                 product_id,
                 order_nb,
                 -deduct_cs,  # 负数表示扣减库存
@@ -592,17 +610,17 @@ class SalesOrderWindow(QWidget):
         sort_option = self.sort_combo.currentText()
         def sort_key(o):
             if sort_option == "按订单日期":
-                return o.get('Order_Date','')
+                return o.get('Order_Date','') or ''
             elif sort_option == "按客户编号":
-                return o.get('Customer_ID','')
+                return o.get('Customer_ID','') or ''
             elif sort_option == "按销售订单号":
-                return o.get('Sales_ID','')
+                return o.get('Sales_ID','') or ''
             elif sort_option == "按采购订单号":
-                return o.get('Order_Nb','')
+                return o.get('Order_Nb','') or ''
             elif sort_option == "按产品编号":
-                return o.get('Product_ID','')
+                return o.get('Product_ID','') or ''
             elif sort_option == "按产品名称":
-                return o.get('Product_Name','')
+                return o.get('Product_Name','') or ''
             elif sort_option == "按总金额":
                 try:
                     return float(o.get('Total_Amount',0))

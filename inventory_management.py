@@ -116,7 +116,7 @@ class InventoryManagementWindow(QWidget):
         self.detail_inventory_table.setColumnCount(14)
         self.detail_inventory_table.setHorizontalHeaderLabels([
             'Order Type', '采购订单', '销售订单', '产品编号', 'SKU CLS', '产品名称',
-            '库存-箱数', '总瓶数', '采购总数', '库存天数', '到货日期', '提货日期', '售空日期', '创建日期'
+            '库存-箱数', '总瓶数', '采购总瓶数', '库存天数', '到货日期', '提货日期', '售空日期', '创建日期'
         ])
         self.detail_inventory_table.verticalHeader().setVisible(False)
         # 修改列宽调整模式
@@ -274,24 +274,24 @@ class InventoryManagementWindow(QWidget):
         # 排序
         def sort_key(x):
             if sort_option == "按更新时间":
-                return x.get('Last_Update','')
+                return str(x.get('Last_Update') or "")
             elif sort_option == "按采购订单号":
-                return x.get('Order_Nb','')
+                return str(x.get('Order_Nb') or "")
             elif sort_option == "按销售订单":
-                return x.get('Sales_Orders','')
+                return str(x.get('Sales_Orders') or "")
             elif sort_option == "按产品编号":
-                return x.get('Product_ID','')
+                return str(x.get('Product_ID') or "")
             elif sort_option == "按库存-箱数":
-                return int(x.get('Current_Stock_CS',0))
-            return ''
+                try:
+                    return int(x.get('Current_Stock_CS') or 0)
+                except Exception:
+                    return 0
+            return ""
 
-        reverse = True if sort_option in ["按更新时间","按库存-箱数"] else False
-        # 更新时间和库存-箱数按照需要可选是否逆序，这里保持和之前逻辑一致（更新时间原本就是reverse=True）
+        reverse = True if sort_option in ["按更新时间", "按库存-箱数"] else False
         if sort_option == "按更新时间":
-            # 原代码是reverse = True
             sorted_inventory = sorted(filtered_inventory, key=sort_key, reverse=True)
         elif sort_option == "按库存-箱数":
-            # 原来是reverse=True
             sorted_inventory = sorted(filtered_inventory, key=sort_key, reverse=True)
         else:
             sorted_inventory = sorted(filtered_inventory, key=sort_key, reverse=False)

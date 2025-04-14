@@ -67,15 +67,18 @@ def initialize_database():
     field_definitions = ', '.join([f'"{field[1]}" TEXT' for field in db_fields if field[1] != 'Order Nb'])
     cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS purchase_orders (
-            "Order Nb" TEXT PRIMARY KEY,
-            {field_definitions}
+            "PO_GUID" TEXT PRIMARY KEY,
+            "Order Nb" TEXT,
+            {field_definitions},
+            UNIQUE("Order Nb")
         )
     ''')
 
     # 创建销售订单表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sales_orders (
-            "Sales_ID" TEXT PRIMARY KEY,
+            "SO_GUID" TEXT PRIMARY KEY,
+            "Sales_ID" TEXT,
             "Product_ID" TEXT,
             "Customer_ID" TEXT,
             "Quantity_CS_Sold" INTEGER,
@@ -88,14 +91,16 @@ def initialize_database():
             "Remarks" TEXT,
             "Deduction_Details" TEXT,
             "Order_Nb" TEXT,
-            "Product_Name",
-            "BTL_PER_CS" INTEGER
+            "Product_Name" TEXT,
+            "BTL_PER_CS" INTEGER,
+            "PO_GUID" TEXT
         )
     ''')
 
     # 创建库存表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
+            "PO_GUID" TEXT PRIMARY KEY,
             "Product_ID" TEXT,
             "Order_Nb" TEXT,
             "Product_Name" TEXT,
@@ -107,8 +112,7 @@ def initialize_database():
             "Creation_Date" TEXT,
             "Sale_Date" TEXT,
             "Sales_Orders" TEXT,
-            "Pick_up_Date" TEXT,
-            PRIMARY KEY ("Product_ID", "Order_Nb")
+            "Pick_up_Date" TEXT
         )
     ''')
     #创建产品表
@@ -267,6 +271,8 @@ def load_inventory_from_db():
 
 # 保存库存数据
 def save_inventory_to_db(product):
+    # 移除不属于库存数据表的字段，比如 "Order_Type"
+    product.pop("Order_Type", None)
     try:
         conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
         cursor = conn.cursor()
@@ -284,14 +290,51 @@ def save_inventory_to_db(product):
         print(f"保存库存数据时发生错误：{e}")
         QMessageBox.critical(None, "保存错误", f"保存库存数据时发生错误：{e}")
 
+#从库存表中查找对应的PO_GUID
+def get_po_guid_for_inventory(product_id, order_nb):
+    """
+    根据产品编号和订单号，从库存表中查找对应的 PO_GUID。
+    如果找不到，返回 None；如果找到多条记录，返回第一条记录的 PO_GUID（你也可以自行调整处理逻辑）。
+    """
+    # 请确保这里的 db_path 与你实际使用的一致
+    db_path = r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db'
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        # 使用 TRIM 处理可能的空格问题
+        cursor.execute('''
+            SELECT "PO_GUID"
+            FROM inventory
+            WHERE TRIM("Product_ID") = ? AND TRIM("Order_Nb") = ?
+        ''', (product_id.strip(), order_nb.strip()))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return row[0]
+        else:
+            return None
+    except Exception as e:
+        print(f"Error retrieving PO_GUID for Product_ID='{product_id}', Order_Nb='{order_nb}': {e}")
+        return None
+
+# 测试代码
+if __name__ == '__main__':
+    # 示例调用，修改下面的参数为实际存在的值
+    po_guid = get_po_guid_for_inventory("P001", "ORD123")
+    if po_guid:
+        print(f"找到 PO_GUID: {po_guid}")
+    else:
+        print("未找到对应的 PO_GUID。")
+
 # 更新库存数量
-def update_inventory(product_id, order_nb, quantity_change_cs, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type, sale_date=None, sales_orders=None, operation_subtype=None, Pick_up_Date=None ):
+def update_inventory(po_guid,product_id, order_nb, quantity_change_cs, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type, sale_date=None, sales_orders=None, operation_subtype=None, Pick_up_Date=None ):
     try:
         conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
         cursor = conn.cursor()
         
         # 查询当前库存
-        cursor.execute('SELECT "Current_Stock_CS", "BTL PER CS", "Sales_Orders" FROM inventory WHERE "Product_ID" = ? AND "Order_Nb" = ?', (product_id, order_nb))
+        cursor.execute('SELECT "Current_Stock_CS", "BTL PER CS", "Sales_Orders"  FROM inventory WHERE "PO_GUID" = ?', (po_guid,))
         result = cursor.fetchone()
         if result:
             # 如果库存记录存在，更新库存数量
@@ -317,22 +360,22 @@ def update_inventory(product_id, order_nb, quantity_change_cs, arrival_date, cre
             if new_stock_cs == 0: #and new_stock_btl == 0:
                 if operation_type == 'revoke_purchase_order':
                     # 撤销采购订单导致库存为零，删除库存记录
-                    cursor.execute('DELETE FROM inventory WHERE "Product_ID" = ? AND "Order_Nb" = ?', (product_id, order_nb))
+                    cursor.execute('DELETE FROM inventory WHERE "PO_GUID" = ?', (po_guid,))
                 else:
                     # 正常销售导致库存为零，保留库存记录
-                    cursor.execute('UPDATE inventory SET "Product_ID" = ?, "Order_Nb" = ?, "Product_Name" = ?, "SKU_CLS" = ?, "Current_Stock_CS" = 0, "BTL PER CS" = ?, "Last_Update" = ?, "Arrival_Date" = ?, "Creation_Date" = ?, "Sale_Date" = ?, "Sales_Orders" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?',
-                                   (product_id, order_nb, item_name, sku_cls, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date, sale_date or datetime.datetime.now().strftime("%Y-%m-%d"), updated_sales_orders_str, product_id, order_nb))
+                    cursor.execute('UPDATE inventory SET "Product_ID" = ?, "Order_Nb" = ?, "Product_Name" = ?, "SKU_CLS" = ?, "Current_Stock_CS" = 0, "BTL PER CS" = ?, "Last_Update" = ?, "Arrival_Date" = ?, "Creation_Date" = ?, "Sale_Date" = ?, "Sales_Orders" = ? WHERE "PO_GUID" = ?',
+                                   (product_id, order_nb, item_name, sku_cls, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date, sale_date or datetime.datetime.now().strftime("%Y-%m-%d"), updated_sales_orders_str, po_guid))
             else:
                 # 库存数量不为零，更新库存记录
-                cursor.execute('UPDATE inventory SET "Product_ID" = ?, "Order_Nb" = ?, "Product_Name" = ?, "SKU_CLS" = ?, "Current_Stock_CS" = ?, "BTL PER CS" = ?, "Last_Update" = ?, "Arrival_Date" = ?, "Creation_Date" = ?, "Sale_Date" = NULL, "Sales_Orders" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?',
-                               (product_id, order_nb, item_name, sku_cls, new_stock_cs, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date, updated_sales_orders_str, product_id, order_nb))
+                cursor.execute('UPDATE inventory SET "Product_ID" = ?, "Order_Nb" = ?, "Product_Name" = ?, "SKU_CLS" = ?, "Current_Stock_CS" = ?, "BTL PER CS" = ?, "Last_Update" = ?, "Arrival_Date" = ?, "Creation_Date" = ?, "Sale_Date" = NULL, "Sales_Orders" = ? WHERE "PO_GUID" = ?',
+                               (product_id, order_nb, item_name, sku_cls, new_stock_cs, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date, updated_sales_orders_str, po_guid))
 
         else:
             # 库存记录不存在
             if quantity_change_cs > 0:#or quantity_change_btl > 0:
                 # 增加库存，新增库存记录
-                cursor.execute('INSERT INTO inventory ("Product_ID", "Order_Nb", "Product_Name", "SKU_CLS", "Current_Stock_CS", "BTL PER CS", "Last_Update", "Arrival_Date", "Creation_Date") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                               (product_id, order_nb, item_name, sku_cls, quantity_change_cs, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date))
+                cursor.execute('INSERT INTO inventory ("PO_GUID", "Product_ID", "Order_Nb", "Product_Name", "SKU_CLS", "Current_Stock_CS", "BTL PER CS", "Last_Update", "Arrival_Date", "Creation_Date") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                               (po_guid, product_id, order_nb, item_name, sku_cls, quantity_change_cs, btl_per_cs, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), arrival_date, creation_date))
             else:
                 # 减少库存，且库存记录不存在，抛出异常
                 raise ValueError("库存中不存在该产品，无法减少库存")
@@ -408,19 +451,11 @@ def restore_inventory(sales_order):
             sku_cls = inventory_item.get('SKU_CLS')
             # 计算新的瓶数和箱数
             new_stock_cs = current_stock_cs + add_cs
-            '''# 获取现有的 Sales_Orders
-            existing_sales_orders = inventory_item.get('Sales_Orders', '')
-            if existing_sales_orders:
-                # 将字符串转换为集合
-                existing_sales_orders_set = set(existing_sales_orders.split(','))
-                # 从集合中移除当前销售订单号
-                updated_sales_orders_set = existing_sales_orders_set - {sales_order['Sales_ID']}
-                # 转换回字符串
-                updated_sales_orders = ','.join(sorted(updated_sales_orders_set))
-            else:
-                updated_sales_orders = None'''
+
             # 更新库存
+            po_guid = get_po_guid_for_inventory(product_id, order_nb)
             update_inventory(
+                po_guid,
                 product_id,
                 order_nb,
                 new_stock_cs - current_stock_cs,
@@ -568,82 +603,138 @@ def check_and_add_new_product(order):
         if inconsistencies:
             QMessageBox.warning(None, "产品信息不一致", f"产品 {sku_cls} 的以下信息与产品列表不一致：{', '.join(inconsistencies)}。请检查。")
 
-def cascade_update_purchase_order(old_order_nb, new_order_nb, new_order_data=None):
+def cascade_update_purchase_order_by_guid(po_guid, new_order_nb=None, new_order_data=None):
     """
-    将采购订单号从 old_order_nb 更新为 new_order_nb，并级联更新所有相关记录。
+    根据采购订单的 PO_GUID 进行级联更新。
     参数:
-      old_order_nb: 旧的采购订单号
-      new_order_nb: 新的采购订单号
-      new_order_data: 其他需要同时更新的字段（可选）
+      po_guid: 要更新的采购订单 GUID
+      new_order_nb: 若需要更新采购订单的 'Order Nb'，则传入新的订单号；否则为 None
+      new_order_data: 需要同时更新的其它字段(dict)，例如 {'Supplier': 'NewSupplier'} 等
     """
-    # 1. 更新采购订单数据（内存中和数据库）
-    for order in purchase_orders:
-        if order.get("Order Nb") == old_order_nb:
-            order["Order Nb"] = new_order_nb
-            if new_order_data:
-                order.update(new_order_data)
-            save_purchase_order_to_db(order)
-            break
 
-    # 2. 级联更新销售订单中的引用
-    for s_order in sales_orders:
-        # 如果销售订单的主订单号字段等于旧订单号，更新为新订单号
-        if s_order.get("Order_Nb", "") == old_order_nb:
-            s_order["Order_Nb"] = new_order_nb
-        # 更新销售订单中扣减详情里引用的订单号
-        for deduction in s_order.get("Deduction_Details", []):
-            if deduction.get("Order_Nb") == old_order_nb:
-                deduction["Order_Nb"] = new_order_nb
-        save_sales_order_to_db(s_order)
-    
-    # 3. 级联更新库存记录中的订单号
+    # 1. 在内存中找到对应的采购订单
+    purchase_order = next((po for po in purchase_orders if po.get('PO_GUID') == po_guid), None)
+    if not purchase_order:
+        print(f"[级联更新] 未找到 PO_GUID = {po_guid} 的采购订单，无法更新。")
+        return
+    # 保存旧的订单号以便后续更新销售订单扣减详情
+    old_order_nb = purchase_order.get("Order Nb", "")
+    # 2. 更新采购订单显示字段
+    if new_order_nb is not None:
+        purchase_order['Order Nb'] = new_order_nb
+    if new_order_data:
+        purchase_order.update(new_order_data)
+
+    # 写回数据库
+    save_purchase_order_to_db(purchase_order)
+
+    # 3. 级联更新库存记录
+    #   找到所有与该 PO_GUID 匹配的库存记录，若需要同步更新 'Order_Nb' 等字段，则在此处理
     for item in inventory:
-        if item.get("Order_Nb", "") == old_order_nb:
-            item["Order_Nb"] = new_order_nb
+        if item.get("PO_GUID") == po_guid:
+            if new_order_nb is not None:
+                item["Order_Nb"] = new_order_nb
+            if new_order_data:
+                if "Product_ID" in new_order_data:
+                    item["Product_ID"] = new_order_data["Product_ID"]
+                if "ITEM Name" in new_order_data:
+                    item["Product_Name"] = new_order_data["ITEM Name"]  # 假设库存中字段为 Product_Name
+                if "BTL PER CS" in new_order_data:
+                    item["BTL PER CS"] = new_order_data["BTL PER CS"]
             save_inventory_to_db(item)
 
-    # 发射信号通知界面刷新
+    # 4. 级联更新销售订单
+    #   因为销售订单可能存储多个 PO_GUID（用逗号分隔），需要逐一检查
+    for s_order in sales_orders:
+        po_guid_list_str = s_order.get('PO_GUID', '')
+        po_guid_list = [guid.strip() for guid in po_guid_list_str.split(',') if guid.strip()]
+
+        # 如果该销售订单中包含当前 po_guid，则执行更新
+        if po_guid in po_guid_list:
+            # 销售订单中 'Order_Nb' 字段也可能存储多个采购订单号，
+            # 需要逐一替换旧的订单号为新的订单号 (如有必要)
+            # 简化处理：如果你业务上只存了一个订单号或只想更新第一个，则可以直接改
+            if new_order_nb is not None:
+                # 将旧的 s_order['Order_Nb'] 用逗号分割，逐一替换
+                old_nbs = [nb.strip() for nb in s_order.get('Order_Nb', '').split(',') if nb.strip()]
+                # 这里可以根据实际需求决定是替换第一个匹配还是全部替换为 new_order_nb
+                # 简单做法：全部替换
+                new_nbs = [new_order_nb for _ in old_nbs]
+                s_order['Order_Nb'] = ','.join(new_nbs)
+                deductions = s_order.get("Deduction_Details", [])
+                for ded in deductions:
+                    if ded.get("Order_Nb") == old_order_nb:
+                        ded["Order_Nb"] = new_order_nb
+                s_order["Deduction_Details"] = deductions
+            if new_order_data:
+                if "Product_ID" in new_order_data:
+                    s_order["Product_ID"] = new_order_data["Product_ID"]
+                if "ITEM Name" in new_order_data:
+                    s_order["Product_Name"] = new_order_data["ITEM Name"]
+                if "BTL PER CS" in new_order_data:
+                    s_order["BTL_PER_CS"] = new_order_data["BTL PER CS"]
+                    # 重新计算总销售瓶数：销售瓶数 = 销售箱数 * 更新后的 BTL PER CS
+                    try:
+                        qty_cs_sold = int(s_order.get("Quantity_CS_Sold", 0))
+                    except Exception:
+                        qty_cs_sold = 0
+                    s_order["Total_Quantity_BTL_Sold"] = qty_cs_sold * int(new_order_data["BTL PER CS"])
+            
+            save_sales_order_to_db(s_order)
+
+    # 5. 刷新内存与界面
     data_manager.data_changed.emit()
     data_manager.inventory_changed.emit()
+    print(f"[级联更新] 已根据 PO_GUID={po_guid} 完成采购订单和关联记录的更新。")
 
+def delete_purchase_order_by_guid(po_guid):
+    """
+    根据采购订单的 PO_GUID 删除采购订单，并级联处理库存记录。
+    如果该采购订单已被销售（通过销售订单引用或库存数量小于原始数量），则不允许删除，
+    并提示“该订单已售出，无法删除”。
+    """
+    global purchase_orders
 
-def can_delete_purchase_order(order_nb):
-    """
-    检查是否允许删除采购订单：
-    如果有销售订单（包括扣减详情中引用）使用该订单号，则返回 False。
-    """
-    for s_order in sales_orders:
-        if s_order.get("Order_Nb", "") == order_nb:
-            return False
-        for deduction in s_order.get("Deduction_Details", []):
-            if deduction.get("Order_Nb") == order_nb:
-                return False
-    return True
-
-
-def delete_purchase_order_with_check(order_nb):
-    """
-    删除采购订单前先检查关联的销售订单：
-      - 若存在销售订单引用该订单，则弹出提示并阻止删除。
-      - 若不存在关联销售订单，则执行删除，并对库存记录进行级联更新。
-    """
-    if not can_delete_purchase_order(order_nb):
-        QMessageBox.warning(None, "删除错误", f"采购订单 {order_nb} 存在关联的销售订单，无法删除！")
+    # 1. 在内存中找到对应的采购订单
+    po_to_delete = next((po for po in purchase_orders if po.get("PO_GUID") == po_guid), None)
+    if not po_to_delete:
+        QMessageBox.warning(None, "删除错误", f"找不到 PO_GUID={po_guid} 的采购订单！")
         return
 
-    # 从内存中删除采购订单
-    global purchase_orders
-    purchase_orders = [order for order in purchase_orders if order.get("Order Nb") != order_nb]
-    # 从数据库中删除
-    delete_purchase_order_from_db(order_nb)
+    # 2. 检查销售订单中是否引用了此 PO_GUID
+    for s_order in sales_orders:
+        # 假设销售订单中的 PO_GUID 字段存储为逗号分隔的字符串
+        po_guid_list = [guid.strip() for guid in s_order.get("PO_GUID", "").split(',') if guid.strip()]
+        if po_guid in po_guid_list:
+            QMessageBox.warning(None, "删除错误", f"采购订单已被销售订单 {s_order.get('Sales_ID')} 引用，无法删除！ 请先删除销售订单")
+            return
 
-    # 对库存记录进行级联处理：
-    # 如果库存记录仍引用该订单号，将其标记为“已删除订单: 原订单号”
-    for item in inventory:
-        if item.get("Order_Nb", "") == order_nb:
-            item["Order_Nb"] = f"已删除订单: {order_nb}"
-            save_inventory_to_db(item)
+    # 3. 检查库存记录是否显示库存已售出
+    import sqlite3
+    import datetime
+    db_path = r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db'
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('SELECT "Current_Stock_CS" FROM inventory WHERE "PO_GUID" = ?', (po_guid,))
+    row = cursor.fetchone()
+    if row:
+        current_stock = int(row[0])
+        # 假设采购订单中存有原始库存数量字段"QUANTITY CS"
+        original_qty = int(po_to_delete.get("QUANTITY CS", 0))
+        if current_stock < original_qty:
+            QMessageBox.warning(None, "删除错误", "该采购订单已部分售出，无法删除！请先删除销售订单")
+            conn.close()
+            return
 
+    # 4. 如果检测无异常，级联删除库存记录和采购订单记录
+    cursor.execute('DELETE FROM inventory WHERE "PO_GUID" = ?', (po_guid,))
+    cursor.execute('DELETE FROM purchase_orders WHERE "PO_GUID" = ?', (po_guid,))
+    conn.commit()
+    conn.close()
+
+    # 同步更新内存数据
+    purchase_orders = [po for po in purchase_orders if po.get("PO_GUID") != po_guid]
     data_manager.data_changed.emit()
     data_manager.inventory_changed.emit()
-    QMessageBox.information(None, "成功", f"采购订单 {order_nb} 已删除。")
+    QMessageBox.information(None, "成功", f"采购订单 (PO_GUID={po_guid}) 已删除。")
+

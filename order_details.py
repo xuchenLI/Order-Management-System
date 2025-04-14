@@ -15,11 +15,13 @@ from data import (
     purchase_orders, deleted_orders, db_fields, delete_purchase_order_from_db,
     save_purchase_order_to_db, data_manager, update_inventory, inventory,
     update_inventory_arrival_date, get_purchase_order_by_nb, products, get_product_by_sku, save_product_to_db,
-    load_products_from_db, delete_product_from_db
+    load_products_from_db, delete_product_from_db, cascade_update_purchase_order_by_guid, get_po_guid_for_inventory,
+    sales_orders
 )
 from price_calculator import open_price_calculator
 import json
 import datetime, re
+import uuid
 
 class OrderDetailsWindow(QWidget):
     def __init__(self):
@@ -268,19 +270,19 @@ class OrderDetailsWindow(QWidget):
         sort_option = self.sort_combo.currentText()
         def sort_key(order):
             if sort_option == "按更新时间":
-                return order.get('date', '')
+                return order.get('date', '') or ''
             elif sort_option == "按订单号":
-                return order.get('Order Nb','')
+                return order.get('Order Nb','') or ''
             elif sort_option == "按Product_ID":
-                return order.get('Product_ID','')
+                return order.get('Product_ID','') or ''
             elif sort_option == "按SKU CLS":
-                return order.get('SKU CLS','')
+                return order.get('SKU CLS','') or ''
             elif sort_option == "按Supplier":
-                return order.get('Supplier','')
+                return order.get('Supplier','') or ''
             elif sort_option == "按ITEM Name":
-                return order.get('ITEM Name','')
+                return order.get('ITEM Name','') or ''
             elif sort_option == "按CATEGORY":
-                return order.get('CATEGORY','')
+                return order.get('CATEGORY','') or ''
             elif sort_option == "按INVOICE Price":
                 try:
                     return float(order.get('INVOICE PRICE',0))
@@ -308,6 +310,7 @@ class OrderDetailsWindow(QWidget):
                 row = indexes[0].row()  # 取第一个选中单元格所在的行
                 fs_orders = self.get_filtered_and_sorted_purchase_orders()
                 order = fs_orders[row]
+                self.current_order = fs_orders[row]
                 for field_name, entry in self.entries.items():
                     value = order.get(field_name, "")
                     if isinstance(entry, QComboBox):
@@ -372,7 +375,7 @@ class OrderDetailsWindow(QWidget):
 
             # 添加日期
             new_order['date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
+            new_order['PO_GUID'] = str(uuid.uuid4())
             # 基本检查
             if not new_order['Order Nb']:
                 QMessageBox.warning(self, "添加失败", "订单号不能为空！")
@@ -406,8 +409,10 @@ class OrderDetailsWindow(QWidget):
             creation_date = new_order.get('date', '')
             item_name = new_order.get('ITEM Name', '')
             sku_cls = str(new_order.get('SKU CLS', '')).strip()
+            po_guid = new_order.get('PO_GUID', '')
 
             update_inventory(
+                po_guid,
                 product_id,
                 new_order['Order Nb'],
                 quantity_cs,
@@ -493,18 +498,20 @@ class OrderDetailsWindow(QWidget):
 
     def update_order(self):
         try:
-            order_nb = self.entries['Order Nb'].text().strip()
-            if not order_nb:
-                QMessageBox.warning(self, "更新失败", "请输入订单号！")
+            # 1. 判断是否有选中的订单（缓存的订单记录）
+            if not hasattr(self, "current_order") or self.current_order is None:
+                QMessageBox.warning(self, "更新失败", "请先选择要更新的订单！")
                 return
 
-            # 获取现有订单数据
-            existing_order = get_purchase_order_by_nb(order_nb)
-            if not existing_order:
-                QMessageBox.warning(self, "更新失败", "订单号不存在！")
+            # 2. 使用缓存的订单记录作为原始订单
+            existing_order = self.current_order
+            old_order_nb = existing_order.get("Order Nb", "")
+            po_guid = existing_order.get("PO_GUID", "")
+            if not po_guid:
+                QMessageBox.warning(self, "更新失败", "该订单缺少PO_GUID，无法进行更新！")
                 return
 
-            # 准备更新后的订单数据
+            # 3. 从各输入框中读取用户修改后的数据，构造更新后的订单数据
             updated_order = {}
             for field_name, entry in self.entries.items():
                 if isinstance(entry, QComboBox):
@@ -512,7 +519,8 @@ class OrderDetailsWindow(QWidget):
                 else:
                     value = entry.text().strip()
 
-                # 处理需要整数的字段
+                
+                # 对于需要整数转换的字段
                 if field_name in ["QUANTITY CS", "BTL PER CS", "SKU CLS"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
@@ -522,14 +530,9 @@ class OrderDetailsWindow(QWidget):
                     except ValueError:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 必须是一个有效的整数！")
                         return
-               
-                elif field_name in ["ITEM Name"]:
-                    if not value:
-                        QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
-                        return
-                
-                # 处理需要浮点数的字段
-                elif field_name in ["ALC.", "EXW EURO", "Expected Profit", "Domestic Freight CAD", "EXW EURO", "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
+                # 对于需要浮点转换的字段
+                elif field_name in ["ALC.", "EXW EURO", "Expected Profit", "Domestic Freight CAD",
+                                    "International Freight EURO", "EXW Exchange Rate", "International Freight Exchange Rate"]:
                     if not value:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 不能为空！")
                         return
@@ -538,38 +541,13 @@ class OrderDetailsWindow(QWidget):
                     except ValueError:
                         QMessageBox.warning(self, "输入错误", f"{field_name} 必须是一个有效的数字！")
                         return
-
+                updated_order["PO_GUID"] = existing_order.get("PO_GUID", "")
                 updated_order[field_name] = value
 
-            # 更新日期
+            # 4. 更新日期字段
             updated_order['date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-             # —— 1. 判断 SKU CLS 是否有变化 ——
-            old_sku_cls = str(existing_order.get('SKU CLS', '')).strip()
-            new_sku_cls = str(updated_order.get('SKU CLS', '')).strip()
-            
-            sku_changed = (old_sku_cls != new_sku_cls)
 
-            # —— 2. 如果 SKU CLS 发生变化，先检查/添加新的 SKU CLS 到 products 表 ——
-            if sku_changed:
-                # 如果新的 SKU_CLS 不在产品表中，则自动添加
-                product_in_new_sku = get_product_by_sku(new_sku_cls)
-                if not product_in_new_sku:
-                    # 这里复用已有的添加逻辑，比如 attempt_add_product_to_management
-                    if not self.attempt_add_product_to_management(updated_order):
-                        # 如果添加失败，可直接中断更新流程
-                        return
-            # 计算数量差异
-            old_quantity_cs = int(existing_order.get('QUANTITY CS', 0))
-            new_quantity_cs = int(updated_order.get('QUANTITY CS', 0))
-            delta_quantity_cs = new_quantity_cs - old_quantity_cs
-
-            old_btl_per_cs = int(existing_order.get('BTL PER CS', 0))
-            new_btl_per_cs = int(updated_order.get('BTL PER CS', 0))
-            old_quantity_btl = old_quantity_cs * old_btl_per_cs
-            new_quantity_btl = new_quantity_cs * new_btl_per_cs
-            delta_quantity_btl = new_quantity_btl - old_quantity_btl
-
-            # 更新库存数量
+            # 5. 在此计算数量差异，调用库存更新函数
             product_id = updated_order.get('Product_ID', '')
             arrival_date = updated_order.get('Arrival_Date', '')
             creation_date = updated_order.get('date', '')
@@ -577,9 +555,15 @@ class OrderDetailsWindow(QWidget):
             sku_cls = updated_order.get('SKU CLS', '')
             btl_per_cs = updated_order.get('BTL PER CS', 0)
 
+
+            old_quantity_cs = int(existing_order.get('QUANTITY CS', 0))
+            new_quantity_cs = int(updated_order.get('QUANTITY CS', 0))
+            delta_quantity_cs = new_quantity_cs - old_quantity_cs
+
             update_inventory(
+                po_guid,
                 product_id,
-                order_nb,
+                old_order_nb,  # 此处用原始订单号更新库存
                 delta_quantity_cs,
                 arrival_date,
                 creation_date,
@@ -589,22 +573,45 @@ class OrderDetailsWindow(QWidget):
                 operation_type='update_purchase_order'
             )
 
-            # 保存更新后的订单
+            # 6. 获取用户修改后的新订单号（如果用户修改了订单号，则需要级联更新）
+            new_order_data = {}
+
+            if updated_order.get("Order Nb") != existing_order.get("Order Nb"):
+                new_order_data["Order Nb"] = updated_order["Order Nb"]
+            if updated_order.get("Product_ID") != existing_order.get("Product_ID"):
+                new_order_data["Product_ID"] = updated_order["Product_ID"]
+            if updated_order.get("ITEM Name") != existing_order.get("ITEM Name"):
+                new_order_data["ITEM Name"] = updated_order["ITEM Name"]
+            if updated_order.get("BTL PER CS") != existing_order.get("BTL PER CS"):
+                new_order_data["BTL PER CS"] = updated_order["BTL PER CS"]
+
+            if not updated_order.get("Order Nb", "").strip():
+                QMessageBox.warning(self, "输入错误", "订单号不能为空！")
+                return           
+            new_order_nb = updated_order.get("Order Nb")
+            
+            if new_order_data:
+                cascade_update_purchase_order_by_guid(
+                    po_guid=po_guid,
+                    new_order_nb=new_order_nb,
+                    new_order_data=new_order_data
+                )
+            # 8. 保存更新后的订单到内存和数据库
             index = purchase_orders.index(existing_order)
             purchase_orders[index] = updated_order
             save_purchase_order_to_db(updated_order)
-            data_manager.data_changed.emit()
-             # —— 5. 如果 SKU CLS 被改掉了，则尝试删除旧的 SKU CLS 的产品记录 ——
-            if sku_changed:
-                self.check_and_remove_unused_product(old_sku_cls)
-            # 更新库存中的 Arrival_Date
-            update_inventory_arrival_date(product_id, order_nb, arrival_date)
 
+            # 9. 如有需要，同步更新库存中的 Arrival_Date（这里传入新的订单号）
+            update_inventory_arrival_date(product_id, new_order_nb, arrival_date)
+
+            data_manager.data_changed.emit()
             self.update_order_table()
-            QMessageBox.information(self, "成功", f"订单 {order_nb} 已更新。")
+            QMessageBox.information(self, "成功", f"订单 {old_order_nb} 已更新为 {new_order_nb}。")
         except Exception as e:
             print(f"更新订单时发生错误：{e}")
             QMessageBox.critical(self, "错误", f"更新订单时发生错误：{e}")
+
+
     
     def check_and_remove_unused_product(self, sku_cls: str):
         """
@@ -667,44 +674,73 @@ class OrderDetailsWindow(QWidget):
             if not order_nb:
                 QMessageBox.warning(self, "删除失败", "请输入要删除的订单号！")
                 return
+
+            # 根据订单号找到采购订单（注意：确保订单号唯一或通过UI选中订单记录）
             order = get_purchase_order_by_nb(order_nb)
-            
-            # 调试输出
-            print(f"Order data: {order}")
-            print(f"Order type: {type(order)}")
+            if not order:
+                QMessageBox.warning(self, "删除失败", f"未找到订单号为 {order_nb} 的订单。")
+                return
 
-            if order:
-                # 从采购订单列表中删除
-                purchase_orders.remove(order)
-                # 添加到已删除订单列表，用于撤销删除
-                deleted_orders.append(order)
-                # 从数据库中删除
-                delete_purchase_order_from_db(order_nb)
-                data_manager.data_changed.emit()  # 发射数据变化信号
-                # 获取当前库存
-                quantity_cs = int(order.get('QUANTITY CS', 0))
-                btl_per_cs = int(order.get('BTL PER CS', 0))
+            # 获取该订单的 PO_GUID
+            po_guid = order.get("PO_GUID", "")
+            if not po_guid:
+                QMessageBox.warning(self, "删除失败", "该订单缺少 PO_GUID，无法删除！")
+                return
 
-                # 减少库存
-                update_inventory(
-                    order.get('Product_ID', ''),
-                    order_nb,
-                    -quantity_cs,
-                    order.get('Arrival_Date', ''),
-                    order.get('date', ''),
-                    order.get('ITEM Name', ''),
-                    order.get('SKU CLS', ''),
-                    btl_per_cs,
-                    operation_type='revoke_purchase_order'
-                )
-                print(f"成功执行update_inventory函数")
-                self.update_order_table()
-                QMessageBox.information(self, "成功", f"订单 {order_nb} 已删除。")
-            else:
-                QMessageBox.information(self, "删除失败", f"未找到订单号为 {order_nb} 的订单。")
+            # 1. 检查销售订单引用：遍历所有销售订单，如果有销售订单引用该 PO_GUID，则不允许删除
+            referencing_sales = []
+            for s_order in sales_orders:
+                # 假设销售订单中的 PO_GUID 字段为逗号分隔字符串
+                po_guid_list = [guid.strip() for guid in s_order.get("PO_GUID", "").split(',') if guid.strip()]
+                if po_guid in po_guid_list:
+                    referencing_sales.append(s_order.get("Sales_ID"))
+            if referencing_sales:
+                QMessageBox.warning(self, "删除错误", f"该采购订单已被销售订单 {', '.join(referencing_sales)} 引用，无法删除！")
+                return
+
+            # 2. 检查库存记录状态：通过 PO_GUID 找到库存记录，比较当前库存与原始库存（假设原始库存保存在采购订单中的 "QUANTITY CS" 字段）
+            try:
+                import sqlite3
+                conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT "Current_Stock_CS" FROM inventory WHERE "PO_GUID" = ?', (po_guid,))
+                row = cursor.fetchone()
+                conn.close()
+            except Exception as e:
+                print(f"查询库存时发生错误：{e}")
+                QMessageBox.critical(self, "错误", f"查询库存时发生错误：{e}")
+                return
+
+            if row:
+                current_stock = int(row[0])
+                original_qty = int(order.get("QUANTITY CS", 0))
+                if current_stock < original_qty:
+                    QMessageBox.warning(self, "删除错误", "该采购订单已部分售出，无法删除！")
+                    return
+
+            # 3. 如果检查通过，执行级联删除：
+            #    删除库存记录
+            conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM inventory WHERE "PO_GUID" = ?', (po_guid,))
+            print(f"已删除库存中 PO_GUID={po_guid} 的记录。")
+
+            #    删除采购订单记录
+            cursor.execute('DELETE FROM purchase_orders WHERE "PO_GUID" = ?', (po_guid,))
+            print(f"已删除采购订单中 PO_GUID={po_guid} 的记录。")
+            conn.commit()
+            conn.close()
+
+            # 4. 从内存中删除该订单记录
+            global purchase_orders
+            purchase_orders = [po for po in purchase_orders if po.get("PO_GUID") != po_guid]
+            data_manager.data_changed.emit()
+            data_manager.inventory_changed.emit()
+
+            QMessageBox.information(None, "成功", f"采购订单 (PO_GUID={po_guid}) 已删除。")
         except Exception as e:
-            print(f"删除订单时发生错误：{e}")
-            QMessageBox.critical(self, "错误", f"删除订单时发生错误：{e}")
+            print(f"删除采购订单时发生错误：{e}")
+            QMessageBox.critical(None, "删除错误", f"删除采购订单时发生错误：{e}")
 
 
     def undo_delete_order(self):
@@ -714,32 +750,35 @@ class OrderDetailsWindow(QWidget):
                 return
             # 取出最后一个被删除的订单
             order = deleted_orders.pop()
-            # 添加回采购订单列表
+            # 添加回采购订单列表，并保存到数据库
             purchase_orders.append(order)
-            # 保存到数据库
             save_purchase_order_to_db(order)
-            data_manager.data_changed.emit()  # 发射数据变化信号
-            # 更新库存
-            quantity_cs = int(order.get('QUANTITY CS', 0))
-            btl_per_cs = int(order.get('BTL PER CS', 0))
-            quantity_btl = quantity_cs * btl_per_cs
-            # 增加库存
+            data_manager.data_changed.emit()
+
+            # 对库存进行"恢复"操作：增加库存。假设恢复库存的操作在 add_purchase_order 的库存更新中完成
+            quantity_cs = int(order.get("QUANTITY CS", 0))
+            btl_per_cs = int(order.get("BTL PER CS", 0))
+            product_id = order.get("Product_ID", "")
+            order_nb = order.get("Order Nb", "")
+            po_guid = get_po_guid_for_inventory(product_id, order_nb)
             update_inventory(
-                order.get('Product_ID', ''),
-                order['Order Nb'],
+                po_guid,
+                product_id,
+                order_nb,
                 quantity_cs,
-                order.get('Arrival_Date', ''),
-                order.get('date', ''),
-                order.get('ITEM Name', ''),
-                order.get('SKU CLS', ''),
+                order.get("Arrival_Date", ""),
+                order.get("date", ""),
+                order.get("ITEM Name", ""),
+                order.get("SKU CLS", ""),
                 btl_per_cs,
-                operation_type='add_purchase_order' #删除订单就会从库存中删除，所以撤销删除订单对库存来说等于新添加
+                operation_type='add_purchase_order'
             )
             self.update_order_table()
-            QMessageBox.information(self, "成功", f"订单 {order['Order Nb']} 已恢复。")
+            QMessageBox.information(None, "成功", f"订单 {order['Order Nb']} 已恢复。")
         except Exception as e:
             print(f"撤销删除时发生错误：{e}")
-            QMessageBox.critical(self, "错误", f"撤销删除时发生错误：{e}")
+            QMessageBox.critical(None, "错误", f"撤销删除时发生错误：{e}")
+
 
 
     def export_orders(self):
