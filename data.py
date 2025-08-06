@@ -60,7 +60,7 @@ data_manager = DataManager()
 
 # 初始化数据库
 def initialize_database():
-    conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+    conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
     cursor = conn.cursor()
 
     # 创建采购订单表
@@ -128,13 +128,22 @@ def initialize_database():
             "Creation_Date" TEXT
         )
     ''')
+    # 创建运费表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS main_order_freight (
+            main_order_nb TEXT PRIMARY KEY,
+            air_freight REAL DEFAULT 0,
+            airport_fees REAL DEFAULT 0,
+            inbond_freight REAL DEFAULT 0
+        )
+    ''')
     conn.commit()
     conn.close()
 
 # 加载采购订单
 def load_purchase_orders_from_db():
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM purchase_orders')
         rows = cursor.fetchall()
@@ -146,7 +155,18 @@ def load_purchase_orders_from_db():
             order = {}
             for idx, field in enumerate(cursor.description):
                 field_name = field[0]
-                order[field_name] = row[idx] if row[idx] is not None else ''
+                if field_name == 'material_review':
+                    try:
+                        order[field_name] = json.loads(row[idx]) if row[idx] else {"sticker": "", "发票": "", "照片": ""}
+                    except Exception:
+                        order[field_name] = {"sticker": "", "发票": "", "照片": ""}
+                elif field_name == 'status_history':
+                    try:
+                        order[field_name] = json.loads(row[idx]) if row[idx] else []
+                    except Exception:
+                        order[field_name] = []
+                else:
+                    order[field_name] = row[idx] if row[idx] is not None else ''
             purchase_orders.append(order)
     except Exception as e:
         print(f"无法从数据库加载采购订单数据：{e}")
@@ -155,11 +175,18 @@ def load_purchase_orders_from_db():
 # 保存采购订单
 def save_purchase_order_to_db(order):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        import copy
+        order_to_save = copy.deepcopy(order)
+        # dict/list 类型转为 JSON 字符串
+        if isinstance(order_to_save.get("material_review"), dict):
+            order_to_save["material_review"] = json.dumps(order_to_save["material_review"], ensure_ascii=False)
+        if isinstance(order_to_save.get("status_history"), list):
+            order_to_save["status_history"] = json.dumps(order_to_save["status_history"], ensure_ascii=False)
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
-        placeholders = ', '.join(['?' for _ in order.keys()])
-        field_names = ', '.join([f'"{key}"' for key in order.keys()])
-        values = list(order.values())
+        placeholders = ', '.join(['?' for _ in order_to_save.keys()])
+        field_names = ', '.join([f'"{key}"' for key in order_to_save.keys()])
+        values = list(order_to_save.values())
 
         cursor.execute(f'''
             INSERT OR REPLACE INTO purchase_orders ({field_names})
@@ -174,7 +201,7 @@ def save_purchase_order_to_db(order):
 # 删除采购订单
 def delete_purchase_order_from_db(order_nb):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM purchase_orders WHERE "Order Nb" = ?', (order_nb,))
         conn.commit()
@@ -186,7 +213,7 @@ def delete_purchase_order_from_db(order_nb):
 # 加载销售订单
 def load_sales_orders_from_db():
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM sales_orders')
         rows = cursor.fetchall()
@@ -210,7 +237,7 @@ def load_sales_orders_from_db():
 # 保存销售订单
 def save_sales_order_to_db(order):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
 
         # 序列化 Deduction_Details
@@ -237,7 +264,7 @@ def save_sales_order_to_db(order):
 # 删除销售订单
 def delete_sales_order_from_db(sales_id):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM sales_orders WHERE "Sales_ID" = ?', (sales_id,))
         conn.commit()
@@ -250,7 +277,7 @@ def delete_sales_order_from_db(sales_id):
 def load_inventory_from_db():
     try:
         global inventory
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM inventory')
@@ -274,7 +301,7 @@ def save_inventory_to_db(product):
     # 移除不属于库存数据表的字段，比如 "Order_Type"
     product.pop("Order_Type", None)
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         placeholders = ', '.join(['?' for _ in product.keys()])
         field_names = ', '.join([f'"{key}"' for key in product.keys()])
@@ -297,7 +324,7 @@ def get_po_guid_for_inventory(product_id, order_nb):
     如果找不到，返回 None；如果找到多条记录，返回第一条记录的 PO_GUID（你也可以自行调整处理逻辑）。
     """
     # 请确保这里的 db_path 与你实际使用的一致
-    db_path = r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db'
+    db_path = r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db'
     
     try:
         conn = sqlite3.connect(db_path)
@@ -330,7 +357,7 @@ if __name__ == '__main__':
 # 更新库存数量
 def update_inventory(po_guid,product_id, order_nb, quantity_change_cs, arrival_date, creation_date, item_name, sku_cls, btl_per_cs, operation_type, sale_date=None, sales_orders=None, operation_subtype=None, Pick_up_Date=None ):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         
         # 查询当前库存
@@ -408,7 +435,7 @@ def get_inventory_info(product_id, order_nb):
 # 更新库存中的 Arrival_Date
 def update_inventory_arrival_date(product_id, order_nb, arrival_date):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('UPDATE inventory SET "Arrival_Date" = ? WHERE "Product_ID" = ? AND "Order_Nb" = ?', (arrival_date, product_id, order_nb))
         conn.commit()
@@ -517,7 +544,7 @@ def get_WHOLESALE_BTL_price(product_id):
 # 加载产品数据
 def load_products_from_db():
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM products')
         rows = cursor.fetchall()
@@ -537,7 +564,7 @@ def load_products_from_db():
 # 保存产品
 def save_product_to_db(product):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         placeholders = ', '.join(['?' for _ in product.keys()])
         field_names = ', '.join([f'"{key}"' for key in product.keys()])
@@ -556,7 +583,7 @@ def save_product_to_db(product):
 # 删除产品
 def delete_product_from_db(sku_cls):
     try:
-        conn = sqlite3.connect(r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db')
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
         cursor = conn.cursor()
         cursor.execute('DELETE FROM products WHERE "SKU_CLS" = ?', (sku_cls,))
         conn.commit()
@@ -691,7 +718,7 @@ def delete_purchase_order_by_guid(po_guid):
     """
     根据采购订单的 PO_GUID 删除采购订单，并级联处理库存记录。
     如果该采购订单已被销售（通过销售订单引用或库存数量小于原始数量），则不允许删除，
-    并提示“该订单已售出，无法删除”。
+    并提示"该订单已售出，无法删除"。
     """
     global purchase_orders
 
@@ -712,7 +739,7 @@ def delete_purchase_order_by_guid(po_guid):
     # 3. 检查库存记录是否显示库存已售出
     import sqlite3
     import datetime
-    db_path = r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db'
+    db_path = r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db'
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('SELECT "Current_Stock_CS" FROM inventory WHERE "PO_GUID" = ?', (po_guid,))
@@ -737,4 +764,38 @@ def delete_purchase_order_by_guid(po_guid):
     data_manager.data_changed.emit()
     data_manager.inventory_changed.emit()
     QMessageBox.information(None, "成功", f"采购订单 (PO_GUID={po_guid}) 已删除。")
+
+# 获取主订单号的运费
+def get_freight_by_main_order(main_order_nb):
+    try:
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT air_freight, airport_fees, inbond_freight FROM main_order_freight WHERE main_order_nb=?', (main_order_nb,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {'air': row[0], 'airport': row[1], 'inbond': row[2]}
+        else:
+            return {'air': 0, 'airport': 0, 'inbond': 0}
+    except Exception as e:
+        print(f"获取主订单运费失败: {e}")
+        return {'air': 0, 'airport': 0, 'inbond': 0}
+
+# 设置主订单号的运费
+def set_freight_for_main_order(main_order_nb, air, airport, inbond):
+    try:
+        conn = sqlite3.connect(r'C:\Users\mosho\OneDrive\Order_Management_Tool\orders.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO main_order_freight (main_order_nb, air_freight, airport_fees, inbond_freight)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(main_order_nb) DO UPDATE SET
+                air_freight=excluded.air_freight,
+                airport_fees=excluded.airport_fees,
+                inbond_freight=excluded.inbond_freight
+        ''', (main_order_nb, air, airport, inbond))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"保存主订单运费失败: {e}")
 

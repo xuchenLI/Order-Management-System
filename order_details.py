@@ -22,6 +22,113 @@ from price_calculator import open_price_calculator
 import json
 import datetime, re
 import uuid
+import os
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QLineEdit, QFileDialog, QMessageBox
+
+class SupplierManagerDialog(QDialog):
+    def __init__(self, parent, supplier_combo, suppliers_dir=r"D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\suppliers"):
+        super().__init__(parent)
+        self.setWindowTitle("供应商管理")
+        self.setGeometry(400, 300, 500, 400)
+        self.suppliers_dir = suppliers_dir
+        self.supplier_combo = supplier_combo
+        if not os.path.exists(self.suppliers_dir):
+            os.makedirs(self.suppliers_dir)
+        # 自动为下拉框已有供应商补全文件夹
+        if hasattr(self.supplier_combo, 'count') and hasattr(self.supplier_combo, 'itemText'):
+            for i in range(self.supplier_combo.count()):
+                name = self.supplier_combo.itemText(i)
+                if name and not os.path.exists(os.path.join(self.suppliers_dir, name)):
+                    os.makedirs(os.path.join(self.suppliers_dir, name))
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        # 供应商列表
+        self.list_widget = QListWidget()
+        self.refresh_supplier_list()
+        layout.addWidget(QLabel("现有供应商："))
+        layout.addWidget(self.list_widget)
+        # 新增供应商区域
+        add_layout = QHBoxLayout()
+        self.input_new = QLineEdit(); self.input_new.setPlaceholderText("新供应商名称")
+        btn_upload = QPushButton("上传文件")
+        btn_add = QPushButton("新添加供应商")
+        add_layout.addWidget(self.input_new)
+        add_layout.addWidget(btn_upload)
+        add_layout.addWidget(btn_add)
+        layout.addLayout(add_layout)
+        btn_upload.clicked.connect(self.upload_file)
+        btn_add.clicked.connect(self.add_supplier)
+
+    def is_valid_supplier_name(self, name):
+        # 禁止非法文件名字符
+        return bool(name) and not re.search(r'[\\/:*?"<>|]', name)
+
+    def refresh_supplier_list(self):
+        self.list_widget.clear()
+        suppliers = [name for name in os.listdir(self.suppliers_dir) if os.path.isdir(os.path.join(self.suppliers_dir, name))]
+        for name in suppliers:
+            item_widget = QWidget()
+            hbox = QHBoxLayout()
+            hbox.setContentsMargins(0,0,0,0)
+            hbox.setSpacing(4)
+            label = QLabel(name)
+            btn_folder = QPushButton()
+            btn_folder.setText("📁")
+            btn_folder.setFixedWidth(28)
+            btn_folder.clicked.connect(lambda _, n=name: self.open_folder(n))
+            hbox.addWidget(label)
+            hbox.addWidget(btn_folder)
+            hbox.addStretch()
+            item_widget.setLayout(hbox)
+            from PyQt6.QtWidgets import QListWidgetItem
+            item = QListWidgetItem(self.list_widget)
+            self.list_widget.addItem(item)
+            self.list_widget.setItemWidget(item, item_widget)
+
+    def open_folder(self, supplier_name):
+        folder_path = os.path.abspath(os.path.join(self.suppliers_dir, supplier_name))
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        import subprocess
+        if os.name == 'nt':
+            os.startfile(folder_path)
+        elif os.name == 'posix':
+            subprocess.Popen(['xdg-open', folder_path])
+        else:
+            QMessageBox.information(self, "提示", f"请手动打开: {folder_path}")
+
+    def upload_file(self):
+        supplier_name = self.input_new.text().strip()
+        if not self.is_valid_supplier_name(supplier_name):
+            QMessageBox.warning(self, "提示", "请先输入合法的新供应商名称")
+            return
+        folder_path = os.path.join(self.suppliers_dir, supplier_name)
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        files, _ = QFileDialog.getOpenFileNames(self, "选择要上传的文件")
+        for f in files:
+            try:
+                import shutil
+                shutil.copy(f, folder_path)
+            except Exception as e:
+                QMessageBox.warning(self, "上传失败", f"文件 {f} 上传失败: {e}")
+        QMessageBox.information(self, "上传成功", "文件已上传到供应商文件夹")
+
+    def add_supplier(self):
+        supplier_name = self.input_new.text().strip()
+        if not self.is_valid_supplier_name(supplier_name):
+            QMessageBox.warning(self, "提示", "请输入合法的供应商名称（不能包含\\/:*?\"<>|等字符）")
+            return
+        folder_path = os.path.join(self.suppliers_dir, supplier_name)
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        # 加入下拉框
+        if hasattr(self.supplier_combo, 'count') and hasattr(self.supplier_combo, 'itemText'):
+            if supplier_name not in [self.supplier_combo.itemText(i) for i in range(self.supplier_combo.count())]:
+                self.supplier_combo.addItem(supplier_name)
+            self.supplier_combo.setCurrentText(supplier_name)
+        self.refresh_supplier_list()
+        QMessageBox.information(self, "成功", f"已添加供应商：{supplier_name}")
 
 class OrderDetailsWindow(QWidget):
     def __init__(self):
@@ -41,7 +148,7 @@ class OrderDetailsWindow(QWidget):
             ('订单号', 'Order Nb'),
             ('产品编号', 'Product_ID'),
             ('Order Type', 'Order Type'),
-            ('Order Step', 'Order Step'),
+            # ('Order Step', 'Order Step'),  # 删除这一项
             ('期望利润', "Expected Profit"),
             ('境内运费', 'Domestic Freight CAD'),
             ('国际运费', 'International Freight EURO'),
@@ -76,10 +183,6 @@ class OrderDetailsWindow(QWidget):
                 entry = QComboBox()
                 entry.addItems(["Allocation", "In Stock"])
                 entry.setCurrentText("Allocation")
-            elif field_name == "Order Step":
-                entry = QComboBox()
-                entry.addItems(["Offer", "Order", "Delivery"])
-                entry.setCurrentText("Offer")
             elif field_name == "Expected Profit":
                 entry = QLineEdit()
                 entry.setText("0.05")
@@ -108,7 +211,31 @@ class OrderDetailsWindow(QWidget):
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if field_name == "Supplier":
                 entry = QComboBox()
-                entry.addItems(["Filips", "CVBG", "DULONG", "BONCHATEAU", "CDF"])
+                # 动态从suppliers文件夹读取供应商名称，而不是硬编码
+                suppliers_dir = r"D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\suppliers"
+                if os.path.exists(suppliers_dir):
+                    suppliers = [name for name in os.listdir(suppliers_dir) if os.path.isdir(os.path.join(suppliers_dir, name))]
+                    entry.addItems(suppliers)
+                else:
+                    # 如果文件夹不存在，使用默认列表
+                    entry.addItems(["Filips", "CVBG", "DULONG", "BONCHAEAU"])
+                btn_add_supplier = QPushButton("+")
+                btn_add_supplier.setFixedWidth(24)
+                def open_supplier_manager():
+                    dlg = SupplierManagerDialog(self, entry)
+                    dlg.exec()
+                btn_add_supplier.clicked.connect(open_supplier_manager)
+                supplier_layout = QHBoxLayout()
+                supplier_layout.setContentsMargins(0,0,0,0)
+                supplier_layout.setSpacing(2)
+                supplier_layout.addWidget(entry)
+                supplier_layout.addWidget(btn_add_supplier)
+                supplier_widget = QWidget()
+                supplier_widget.setLayout(supplier_layout)
+                self.entries[field_name] = entry
+                self.layout_inputs.addWidget(label, row, 2)
+                self.layout_inputs.addWidget(supplier_widget, row, 3)
+                continue
             elif field_name == "CATEGORY":
                 entry = QComboBox()
                 entry.addItems(["RED", "WHITE", "ROSE", "CHAMPAGNE"])
@@ -376,6 +503,7 @@ class OrderDetailsWindow(QWidget):
             # 添加日期
             new_order['date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             new_order['PO_GUID'] = str(uuid.uuid4())
+            new_order['Order Step'] = '未下单'  # 新订单默认状态
             # 基本检查
             if not new_order['Order Nb']:
                 QMessageBox.warning(self, "添加失败", "订单号不能为空！")

@@ -18,7 +18,8 @@ from order_details import OrderDetailsWindow
 from inventory_management import InventoryManagementWindow
 from sales_order import SalesOrderWindow
 from product_management import ProductManagementWindow  
-from financial_management import FinancialManagementWindow
+from purchase_order_dashboard import PurchaseOrderDashboardWindow
+# from aglc_report_parser import open_aglc_parser  # 暂时注释掉，等待重新实现
 
 # 配置数据库和备份文件夹路径
 DB_PATH = r'D:\00_Programming\98_Pycharm\00_Workplace\Order Manager\Official_Tool\01_Cursor_Code\01_Working\00_Main Branch\orders.db'
@@ -102,8 +103,12 @@ layout_main = QVBoxLayout()
 # 按钮区域
 layout_buttons = QHBoxLayout()
 
-button_order_details = QPushButton("采购订单管理")
-button_order_details.clicked.connect(lambda: open_order_details_window())
+button_order_dashboard = QPushButton("采购订单仪表盘")
+button_order_dashboard.clicked.connect(lambda: open_purchase_order_dashboard_window())
+
+# 移除采购订单管理按钮
+# button_order_details = QPushButton("采购订单管理")
+# button_order_details.clicked.connect(lambda: open_order_details_window())
 
 button_sales_order = QPushButton("销售订单管理")
 button_sales_order.clicked.connect(lambda: open_sales_order_window())
@@ -117,15 +122,21 @@ button_product_management.clicked.connect(lambda: open_product_management_window
 button_file_compare_tool = QPushButton("文件对比工具")
 button_file_compare_tool.clicked.connect(lambda: file_compare.open_file_compare_tool())
 
-button_financial_management = QPushButton("财务管理")
-button_financial_management.clicked.connect(lambda: open_financial_management_window())
+# button_aglc_parser = QPushButton("AGLC报告解析")
+# button_aglc_parser.clicked.connect(lambda: open_aglc_parser())
 
-layout_buttons.addWidget(button_order_details)
+# 删除财务管理相关内容
+# button_financial_management = QPushButton("财务管理")
+# button_financial_management.clicked.connect(lambda: open_financial_management_window())
+
+layout_buttons.addWidget(button_order_dashboard)
+# layout_buttons.addWidget(button_order_details)
 layout_buttons.addWidget(button_sales_order)
 layout_buttons.addWidget(button_inventory_management)
 layout_buttons.addWidget(button_product_management)
 layout_buttons.addWidget(button_file_compare_tool)
-layout_buttons.addWidget(button_financial_management)
+# layout_buttons.addWidget(button_aglc_parser)
+# layout_buttons.addWidget(button_financial_management)
 
 layout_main.addLayout(layout_buttons)
 
@@ -136,6 +147,7 @@ sales_order_window = None
 inventory_management_window = None
 product_management_window = None  
 financial_management_window = None
+purchase_order_dashboard_window = None
 
 # 打开采购订单窗口
 def open_order_details_window():
@@ -189,16 +201,17 @@ def open_product_management_window():
         print(f"打开产品管理窗口时发生错误：{e}")
         QMessageBox.critical(None, "错误", f"打开产品管理窗口时发生错误：{e}")
 
-def open_financial_management_window():
-    global financial_management_window
+def open_purchase_order_dashboard_window():
+    global purchase_order_dashboard_window
     try:
-        if financial_management_window is None:
-            financial_management_window = FinancialManagementWindow()
+        if purchase_order_dashboard_window is None:
+            purchase_order_dashboard_window = PurchaseOrderDashboardWindow()
         else:
-            financial_management_window.calculate_financial_metrics()
-        financial_management_window.show()
+            purchase_order_dashboard_window.refresh_main_orders()
+        purchase_order_dashboard_window.show()
     except Exception as e:
-        QMessageBox.critical(None, "错误", f"打开财务管理窗口时发生错误：{e}")
+        print(f"打开采购订单仪表盘窗口时发生错误：{e}")
+        QMessageBox.critical(None, "错误", f"打开采购订单仪表盘窗口时发生错误：{e}")
 
 # 设置主布局
 window.setLayout(layout_main)

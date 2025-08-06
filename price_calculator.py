@@ -36,9 +36,16 @@ def open_price_calculator(order_details_window):
     layout = QVBoxLayout()
 
     # 订单号输入字段
+    layout.addWidget(QLabel("单个订单计算:"))
     order_nb_entry = QLineEdit()
     layout.addWidget(QLabel("订单号:"))
     layout.addWidget(order_nb_entry)
+
+    # 主订单号输入字段
+    layout.addWidget(QLabel("批量计算:"))
+    main_order_nb_entry = QLineEdit()
+    layout.addWidget(QLabel("主订单号:"))
+    layout.addWidget(main_order_nb_entry)
 
     # 显示计算结果的字段
     results_labels = {
@@ -61,11 +68,15 @@ def open_price_calculator(order_details_window):
         layout.addWidget(entry)
 
     # 计算和配置按钮
-    calc_button = QPushButton("计算")
+    calc_button = QPushButton("计算单个订单")
     calc_button.clicked.connect(lambda: calculate_and_display(order_nb_entry.text(), results_labels))
     layout.addWidget(calc_button)
 
-    update_button = QPushButton("更新")
+    batch_calc_button = QPushButton("批量计算主订单")
+    batch_calc_button.clicked.connect(lambda: batch_calculate_main_order(main_order_nb_entry.text(), order_details_window))
+    layout.addWidget(batch_calc_button)
+
+    update_button = QPushButton("更新单个订单")
     update_button.clicked.connect(lambda: update_order(order_nb_entry.text(), results_labels, order_details_window))
     layout.addWidget(update_button)
 
@@ -156,6 +167,93 @@ def update_order(order_nb, results_labels, order_details_window):
     except Exception as e:
         print(f"更新订单时发生错误：{e}")
         QMessageBox.critical(None, "更新错误", f"更新订单时发生错误：{e}")
+
+def batch_calculate_main_order(main_order_nb, order_details_window):
+    """批量计算主订单下所有子订单的价格"""
+    if not main_order_nb:
+        QMessageBox.warning(None, "批量计算错误", "主订单号为空")
+        return
+
+    try:
+        # 过滤该主订单下所有子订单
+        sub_orders = [po for po in purchase_orders if str(po.get("Order Nb", "")).startswith(main_order_nb + "_")]
+        
+        if not sub_orders:
+            QMessageBox.warning(None, "批量计算错误", f"未找到主订单 {main_order_nb} 下的子订单")
+            return
+
+        success_count = 0
+        error_count = 0
+        error_messages = []
+
+        for order in sub_orders:
+            try:
+                order_nb = order.get('Order Nb', '')
+                
+                # 检查 EXW 汇率是否为 0
+                EXW_rate = float(order.get('EXW Exchange Rate', 0))
+                if EXW_rate == 0:
+                    error_messages.append(f"订单 {order_nb}: EXW 汇率为 0")
+                    error_count += 1
+                    continue
+
+                # 计算 QUANTITY BTL 和 TOTAL AMOUNT
+                QUANTITY_CS = int(order.get('QUANTITY CS', 0))
+                BTL_PER_CS = int(order.get('BTL PER CS', 0))
+                EXW = float(order.get('EXW EURO', 0))
+
+                QUANTITY_BTL = QUANTITY_CS * BTL_PER_CS
+                TOTAL_AMOUNT = EXW * QUANTITY_BTL
+
+                # 计算其他价格
+                INVOICE_PRICE, INVOICE_CS, CIF, TOTAL_Freight_CAD, Total_COGS = calculate_invoice_price(order)
+                WHOLESALE_BTL, WHOLESALE_CS = calculate_wholesale(order, INVOICE_CS)
+
+                # 计算 PROFIT PER BT、PROFIT PER CS 和 PROFIT TOTAL
+                expected_profit = float(order.get('Expected Profit', 0))
+                PROFIT_PER_BT = INVOICE_PRICE - Total_COGS
+                PROFIT_PER_CS = PROFIT_PER_BT * BTL_PER_CS
+                PROFIT_TOTAL = PROFIT_PER_CS * QUANTITY_CS
+
+                # 更新订单数据
+                order['INVOICE PRICE'] = str(round(INVOICE_PRICE, 2))
+                order['INVOICE CS'] = str(round(INVOICE_CS, 2))
+                order['WHOLESALE BTL'] = str(round(WHOLESALE_BTL, 2))
+                order['WHOLESALE CS'] = str(round(WHOLESALE_CS, 2))
+                order['TOTAL Freight'] = str(round(TOTAL_Freight_CAD, 2))
+                order['PROFIT PER BT'] = str(round(PROFIT_PER_BT, 2))
+                order['PROFIT PER CS'] = str(round(PROFIT_PER_CS, 2))
+                order['PROFIT TOTAL'] = str(round(PROFIT_TOTAL, 2))
+                order['QUANTITY BTL'] = str(QUANTITY_BTL)
+                order['TOTAL AMOUNT EURO'] = str(round(TOTAL_AMOUNT, 2))
+
+                # 保存到数据库
+                save_purchase_order_to_db(order)
+                success_count += 1
+
+            except Exception as e:
+                error_messages.append(f"订单 {order.get('Order Nb', '')}: {str(e)}")
+                error_count += 1
+
+        # 更新表格显示
+        if order_details_window:
+            order_details_window.update_order_table()
+
+        # 显示结果
+        result_message = f"批量计算完成\n成功: {success_count} 个订单\n失败: {error_count} 个订单"
+        if error_messages:
+            result_message += f"\n\n错误详情:\n" + "\n".join(error_messages[:5])  # 只显示前5个错误
+            if len(error_messages) > 5:
+                result_message += f"\n... 还有 {len(error_messages) - 5} 个错误"
+
+        if error_count == 0:
+            QMessageBox.information(None, "批量计算成功", result_message)
+        else:
+            QMessageBox.warning(None, "批量计算完成", result_message)
+
+    except Exception as e:
+        print(f"批量计算时发生错误：{e}")
+        QMessageBox.critical(None, "批量计算错误", f"批量计算时发生错误：{e}")
 
 def calculate_invoice_price(order):
     try:
